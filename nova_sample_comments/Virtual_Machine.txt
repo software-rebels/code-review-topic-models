@@ -1,0 +1,292 @@
+=-=-=-=-= Comment 0, Score = 0.970 =-=-=-=-=
+Hmm, I wonder if this is too specific to usb tablet. There are already 5 possible pointer modes we can use - ps2, xenbus (xen hypervisor only), vmware (with qemu/kvm !), USB mouse, USB tablet, and SPICE agent.
+
+I think perhaps we should have a generic property to specify the pointer type. eg  hw_pointer_model=ps2|xen|vmware|usbmouse|usbtablet|spice
+
+=-=-=-=-= Comment 1, Score = 0.982 =-=-=-=-=
+Patch Set 24: Code-Review+2 Patch Set 24:
+
+@mikal the container setup may deny the ability to mount filesystems inside as a security restriction. Mounting of filesystems exposes the kernel to significant security risk from maliciously crafted filesystems, so it is not unusal to deny that ability to containers and instead have the host setup the filesystem mounts from known trusted volumes before the container runs. Patch Set 24:
+
+(1 comment) Patch Set 24:
+
+BTW, libvirt LXC with userspaces does not even allow mounting of ext4 filesystems, as even that is a security risk - the have been CVEs in ext4 that allowed malicious disk image to crash the kernel. 
+
+=-=-=-=-= Comment 2, Score = 0.975 =-=-=-=-=
+All of this code is just plain awful, as it depends on private impl details of libvirt LXC that can be changed at any time. If you want to assign block devices to an LXC guest should *must* use the formal XML configuration format, *not* go around changing cgroups & mknod's behind libvirt's back. Also the 'lxc-attach' program is *NOT* part of libvirt - that is the completely separate sf.net LXC toolset.
+
+http://libvirt.org/formatdomain.html#elementsHostDevCaps
+
+=-=-=-=-= Comment 3, Score = 0.969 =-=-=-=-=
+There are 2 problems with this:
+* For all the SCSI controllers (lsiLogic, busLogic, etc.) the controller also utilizes one of the slot itself. This slot# is exposed in the form of "scsiCtlrUnitNumber" property of the VirtualSCSIController, so this needs to be excluded as well.
+
+* For a gives SCSI controller there are in total 16 slots (0-15) out of which one of it is used by the SCSI controller itself. Thus the number 48 is wrong and it should be 16, since any slot# greater that 16 is invalid.
+
+=-=-=-=-= Comment 4, Score = 0.988 =-=-=-=-=
+http://xenbits.xen.org/gitweb/?p=xen.git;a=blob;f=docs/misc/vbd-interface.txt;h=1c996bf64d55874f4549f2880654a54405b375b2;hb=HEAD
+
+See "Concrete encoding in the VBD interface (in xenstore)"
+
+All guests:
+IDE bus vbd.userdevice number 0,1,2,3 map to 0:0, 0:1, 1:0, 1:1
+Xen bus, vbd.userdevice number 0-3 show HD numbering according 
+Xen bus, vbd.userdevice number 0+ show xvd numbering
+
+This means that each disk with userdevice<4 will have 3 entries in the metadata mapping, and each disk with userdevice>=4 will have 1 entry.
+
+Device 0 will therefore have IDE 0:0, Xen 768 and Xen 51712 as the references.  Pseudo-code which I think matches the above URL:
+
+if dev<4: ide.address = "%d:%d"(dev/2, dev%2)
+if dev<16: xen1.address = "%d"(202 << 8 | dev << 4)
+if dev>=16: xen1.address = "%d"(1 << 28 | dev << 8)
+if dev<2: xen2.address = "%d"(3<< 8 | dev << 6)
+if dev>=2 and dev<4: xen2.address = "%d"(22<< 8 | (dev -2)<< 6)
+
+Please check the IDE address format
+
+=-=-=-=-= Comment 5, Score = 0.971 =-=-=-=-=
+I'm not really convinced this should be done. IMHO if the user has specified 'ide' as their desired disk adapter type, then they have consciously opted out of using hotplug, and we shouldn't silently add another SCSI adapter behind their back.
+
+This same limitation of hotplug wrt IDE exists for the libvirt driver too, and most likely for XenAPI too. So I don't think we should treat vmware specially in this respect either
+
+=-=-=-=-= Comment 6, Score = 0.973 =-=-=-=-=
+The code which you reference in change 70263 is actually reading the user's requested disk bus and honouring that. So you're in fact overriding that code.
+
+Looking at the code, discard support is in fact a setting on the backend, so is independent of the type of guest device exposed to the guest. ie discard is not restricted to use with virtio-scsi, it can be set for any disk type.
+
+=-=-=-=-= Comment 7, Score = 0.978 =-=-=-=-=
+Hmm, actually this is not in fact the right place to do this. We cannot assume that every virt driver is going to support the same set of valid disk formats. We need to have the list of valid FS declared by the virt drivers themselves.
+
+In this file we should declare constants for the well known disk format names eg
+
+FS_FORMAT_EXT2 = "ext2"
+FS_FORMAT_EXT3 = "ext3"
+FS_FORMAT_EXT3 = "ext4"
+FS_FORMAT_XFS = "xfs"
+...etc...
+
+And then in the virt/driver.py we should define a method "is_supported_fs_format" which checks against the virt driver specific whitelist of formats.
+
+=-=-=-=-= Comment 8, Score = 0.978 =-=-=-=-=
+It is not cinder's job to specify the guest hardware - in fact it is none of cinder's business at all. Guest hardware configuration is 100% responsibility of Nova to decide. 
+
+Cinder is merely providing the storage backend. Discard is only ever a best effort feature - there is never any guarantee that it will work with the guest or virtual machine as the virtual machine emulator and guest are always free to completely ignore it. So the fact that it will not work with certain disk types is not a problem - it is expected.
+
+=-=-=-=-= Comment 9, Score = 0.970 =-=-=-=-=
+This should explain /why/. In this case (as I'm familiar with it) - I'd say something like "nova baremetal was supplying a pxelinux config file disk path, but PXE clients need the PXE binary to bootstrap, which is neither the config file, nor a filesystem path - it's a path within the TFTP server.
+
+As some environments/architectures may have a different PXE binary, this needs to be an option."
+
+=-=-=-=-= Comment 10, Score = 0.990 =-=-=-=-=
+You shoudl probably include dac_admin capabilities here to avoid issues like: http://logs.openstack.org/86/489486/19/check/gate-tempest-dsvm-neutron-full-ubuntu-xenial/2ec7294/logs/screen-n-cpu.txt.gz#_Aug_15_07_25_23_907713
+
+In fact:
+
+ [tony@thor linux]$ git grep CAP_* fs/devpts fs/namei.c
+ fs/namei.c:345:                                              CAP_DAC_READ_SEARCH))
+ fs/namei.c:347:         if (capable_wrt_inode_uidgid(inode, CAP_DAC_OVERRIDE))
+ fs/namei.c:357:         if (capable_wrt_inode_uidgid(inode, CAP_DAC_READ_SEARCH))
+ fs/namei.c:365:         if (capable_wrt_inode_uidgid(inode, CAP_DAC_OVERRIDE))
+ fs/namei.c:911: * CAP_DAC_OVERRIDE needs to be specifically ignored if the symlink is
+ fs/namei.c:995: *  - not CAP_FOWNER in a namespace with the inode owner uid mapped
+ fs/namei.c:1008:        /* Source inode owner (or CAP_FOWNER) can hardlink all they like,
+ fs/namei.c:2753:        return !capable_wrt_inode_uidgid(inode, CAP_FOWNER);
+ fs/namei.c:2767: *      c. have CAP_FOWNER capability
+ fs/namei.c:3695:        if ((S_ISCHR(mode) || S_ISBLK(mode)) && !capable(CAP_MKNOD))
+ fs/namei.c:4252:         * To use null names we require CAP_DAC_READ_SEARCH
+ fs/namei.c:4257:                if (!capable(CAP_DAC_READ_SEARCH))
+ fs/namei.c:4507:        if ((flags & RENAME_WHITEOUT) && !capable(CAP_MKNOD))
+
+
+implies that dac_admin is all that's needed to read from the console pty.  We can ignore the CAP_MKNOD as we never (i hop) need to make console device nodes ;P
+
+=-=-=-=-= Comment 11, Score = 0.971 =-=-=-=-=
+We need to determine whether hybrid driver is needed based on information from quantum.
+
+Whether quantum security group implementation requires bridge device depends on iptables is used or not.  It is correct that libvirt filter feature is disabled if NoopFirewallDriver is set, but we can't determine whether hybrid driver needs to be used based on get_firewall_required(). It is tricky.
+
+=-=-=-=-= Comment 12, Score = 0.969 =-=-=-=-=
+Hi, I found info is get from function _get_instance_disk_info
+..
+            disk_info.append({'type': disk_type,
+                              'path': path,
+                              'virt_disk_size': virt_size,
+                              'backing_file': backing_file,
+                              'disk_size': dk_size,
+                              'over_committed_disk_size': over_commit_size})
+...
+'backing_file' is always exist in info, but if 'backing_file' not exists, it is "", so I think if statement shoud be
+    if info['backing_file']:
+
+=-=-=-=-= Comment 13, Score = 0.992 =-=-=-=-=
+I really don't like the idea of us *extending* the variants we support ... which is what your method would do
+
+We do know the variants currently supported, it's:
+
+ baremetal.BareMetalDriver
+ baremetal.driver.BareMetalDriver
+ fake.FakeDriver
+ hyperv.driver.HyperVDriver
+ libvirt.LibvirtDriver
+ libvirt.driver.LibvirtDriver
+ powervm.PowerVMDriver
+ powervm.driver.PowerVMDriver
+ vmwareapi.VMwareESXDriver
+ vmwareapi.VMwareVCDriver
+ vmwareapi.driver.VMwareESXDriver
+ vmwareapi.driver.VMwareVCDriver
+ xenapi.XenAPIDriver
+ xenapi.driver.XenAPIDriver
+ nova.virt.baremetal.BareMetalDriver
+ nova.virt.baremetal.driver.BareMetalDriver
+ nova.virt.fake.FakeDriver
+ nova.virt.hyperv.driver.HyperVDriver
+ nova.virt.libvirt.LibvirtDriver
+ nova.virt.libvirt.driver.LibvirtDriver
+ nova.virt.powervm.PowerVMDriver
+ nova.virt.powervm.driver.PowerVMDriver
+ nova.virt.vmwareapi.VMwareESXDriver
+ nova.virt.vmwareapi.VMwareVCDriver
+ nova.virt.vmwareapi.driver.VMwareESXDriver
+ nova.virt.vmwareapi.driver.VMwareVCDriver
+ nova.virt.xenapi.XenAPIDriver
+ nova.virt.xenapi.driver.XenAPIDriver
+
+=-=-=-=-= Comment 14, Score = 0.974 =-=-=-=-=
+Need to check for post-copy flag value too here so it only sets auto-converge on if post-copy is not enabled. If post-copy is enabled then I guess you can check libvirt and qemu versions to see if post-copy is supported and if not then set auto-converge on if enabled and the version of libvirt and qemu support the auto-converge feature
+
+=-=-=-=-= Comment 15, Score = 0.973 =-=-=-=-=
+I am thinking this part can  be refactored. 
+
+checking the vlan tag logic currently only bind to the variable 'create_vlan' tag.
+This shouldn't be the only case. 
+Actually this check need to apply to all portgroups even for create_vlan=false and port group(network_ref) exist situation. 
+
+
+If not network_ref:
+    .....create port groups
+
+if CONF.vmware.ignore_vswitch_validation:
+   ....
+else:
+   do_check...
+
+=-=-=-=-= Comment 16, Score = 0.971 =-=-=-=-=
+Hmm, I'm not entirely comfortable with this.
+
+'iso9660' and 'vfat' both refer to the filesystem inside the config drive and is independent of host side image format, where as 'ploop' refers to the format of the host side image. You're actually creating an ext4 filesystem.
+
+Also with existing hypervisor drivers either of iso9660 or vfat works with any hypervisor, so admins don't need todo anything out of the box to make this work. With this ploop setting, the parallels virt driver will work if-only-if you also set config_drive_format to the correct value which is a little sucky.
+
+I'd like the goal to be "just works out of the box" for all virt drivers.
+
+Thinking about this, we really have at least 3 independent variables here.
+
+ 1. Device type - disk vs cdrom vs filesystem
+ 2. Filesystem type - iso9660 vs vfat vs ext3 vs ....
+ 3. Image type - raw, qcow2, ploop
+
+Some observations
+
+ - Currently image type used is always 'raw' 
+ - Device type is implied - disk if vat, cdrom if iso9660
+ - Filesystem type doesn't hugely matter when using a filesystem device.
+ - This method doesn't really care about the device type exposed to the guest - it is just making images
+
+So I think perhaps we should do this
+
+ - Add a 'image_type' parameter to 'make_drive'
+ - Change 'config_drive_format' so that the default is None rather than iso9660, allow ext3 or ext4 as filesystem types
+ - If config_drive_format is set then use that as the filesystem type
+ - If config_drive_format is None, then decide based on image_type
+      if raw, then use iso9660, else if ploop then use ext4
+
+So we'd end up with something like this 
+
+
+
+ cfg.StrOpt('config_drive_format',
+	default=None,
+	help='Config drive format. One of iso9660, vfat, ext3, ext4, or unset to auto-detect '),
+
+
+  FS_FORMAT_VFAT = "vfat"
+  FS_FORMAT_ISO9660 = "iso9660"
+  FS_FORMAT_EXT3 = "ext3"
+  FS_FORMAT_EXT4 = "ext4"
+
+ IMAGE_TYPE_RAW = "raw"
+ IMAGE_TYPE_PLOOP = "ploop"
+
+ def make_drive(self, path, image_type=IMAGE_TYPE_RAW)
+     fs_format = CONF.config_drive_format
+     if fs_format is None:
+         if image_type == IMAGE_TYPE_RAW
+           fs_format = FS_FORMAT_ISO9660
+         elif image_type == IMAGE_TyPE_PLOOP
+           fs_format = FS_FORMAT_EXT4
+     if image_type == IMAGE_TYPE_RAW:
+        if fs_format not in (FS_FORMAT_VFAT, FS_FORMAT_ISO9660)
+           ...raise exception about unsupported format...
+        if fs_format == FS_FORMAT_VFAT
+           self._make_vfat(...)
+        else:
+           self._make_vfat(...)
+     else if image_type == IMAGE_TYPE_PLOOP
+        if fs_format not in (FS_FORMAT_EXT3, FS_FORMAT_EXT4)
+           ...raise exception about unsupported format...
+        self._make_ploop(fs_format, ...)
+
+
+Now, the libvirt drive.py just needs to pass in a suitable image_type=IMAGE_TYPE_PLOOP when using parallels container based guests and everything should "just work" in out of the box scenario.
+
+=-=-=-=-= Comment 17, Score = 0.967 =-=-=-=-=
+I'm actually thinking we should change this name again.
+
+In libvirt you have a driver type (QEMU, Xen, XenAPI, XenLight, LXC, and so on) which is associated with a connection URI
+
+Each driver can handle multiple virtualization types. eg the QEMU driver type can handle QEMU and KVM virtualization types. And different driver types can handle the same virtualization type (eg Xen, XenLight and XenAPI can all handle Xen virtualization).
+
+So what we're configuring here is actually the virtualization type - the driver type is being implied indirectly.
+
+See also this bug https://bugs.launchpad.net/openstack-manuals/+bug/1195361
+
+
+So I'd like this to be called 'virt_type' instead of 'driver_type' to make the distinction between virtualization type and libvirt driver types clearer
+
+=-=-=-=-= Comment 18, Score = 0.978 =-=-=-=-=
+You still need the if CONF.serial_console.enabled code block for the virtlogd codepath
+
+I think i'd go for something more like
+
+  if CONF.serial_console.enabled:
+      ...add TCP based serial console ports...
+      if supports virtlogd
+          ...set logfile attribute on first port...
+  else:
+      ...add file based serial port...
+      if supports virtlogd
+          ...set logfile attribute on port...
+
+  if not supports virtlogd
+     ...add pty device...
+
+=-=-=-=-= Comment 19, Score = 0.973 =-=-=-=-=
+Perhaps something like:
+
+  if in_format is not None:
+      cmd = ('qemu-img', 'convert', '-f' in_format, '-O', out_format, source, dest)
+  else:
+      cmd = ('qemu-img', 'convert', '-O', out_format, source, dest)
+
+or
+
+   cmd = ('qemu-img', 'convert', '-O', out_format)
+   if in_format is not None:
+       cmd = cmd + ('-f', in_format)
+   cmd = cmd + (source, dest)
+
+
+would be a bit more clear
+

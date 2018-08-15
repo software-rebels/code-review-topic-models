@@ -1,0 +1,126 @@
+=-=-=-=-= Comment 0, Score = 0.976 =-=-=-=-=
+Patch Set 12: Code-Review-1
+
+(3 comments)
+
+TBH I don't like this approach for reducing the code complexity in this case.  It seems to be aimed at reducing an arbitrary measure (presumably function length) by making the code harder to follow.
+
+I'd suggest a different approach - perhaps a series of helper methods which all take task states?  e.g. 778-805 could be _maybe_set_error_state, 807-829 could be _maybe_clear_task_state and so on.
+The conditional logic for each of the operations would then be in the helper methods, rather than the main function. 
+
+=-=-=-=-= Comment 1, Score = 0.974 =-=-=-=-=
+I do like self documenting method names when possible :)
+
+My comment is from my thinking about the comment above:
+
+  # We must be the first non-remotable thing underneath a stack of 
+  # remotable things (i.e. the actual implementation method) 
+
+There could eventually be a non-remotable method below all remotable things, but above the actual implementation.  Maybe that doesn't make sense and will never happen.  I was just considering some future-proofing.  But I'm not -1, just wanted to bring it up.
+
+=-=-=-=-= Comment 2, Score = 0.975 =-=-=-=-=
+self.originals and self.used_images are set in updates(), not in __init__(). It doesn't look to me as though update() is necessarily called directly after ImageCacheManager creation, so if anything expecting the interface of the superclass tries to call this it will:
+
+1. explode because of an incorrect signature.
+2. explode because of missing attributes.
+
+If _age_and_verify_cached_images() is truly a private interface I guess this doesn't matter, but in that case why would it be in the superclass?
+
+=-=-=-=-= Comment 3, Score = 0.980 =-=-=-=-=
+You're basically doing the sleep whenever you are calculating a checksum or transferring a potentially large file via ftp.  Rather than put sleeps all over this code where those methods are called, I'd move the thread sleep (yield) logic into the checksum/ftp methods and make them optional, e.g. add a new argument, yield=False, or something like that, and then you can pass yield=True from this method.  Then it's contained in a central place and can be re-used elsewhere if needed (and would clean up this code).
+
+=-=-=-=-= Comment 4, Score = 0.970 =-=-=-=-=
+Actually, he wants to get away from doing any of the calls with an explicit context and instead only pass the context during object init like he's doing here. However, your point is very valid and is maybe a good reason to rethink that approach.
+
+However, it's not any different than what came before. That said, I don't know why he's changing it here, seemingly randomly :)
+
+Chris, any reason not to strive for minimal change here and make those conversions separately if/when we decide to?
+
+=-=-=-=-= Comment 5, Score = 0.973 =-=-=-=-=
+I know the aim is to reduce "code complexity" - but this change is substantially increasing understandability IMO.  There are far too many values being passed through to VMOpsSpawnHelper, and the class name itself almost implies that we're trying to move *everything* here and make this class just as complicated as the original spawn method.
+
+If we're going to refactor spawn then can we consider each method one-by-one and do the right thing for that method rather than pushing them all to a 'helper' class?
+
+=-=-=-=-= Comment 6, Score = 0.970 =-=-=-=-=
+I like iterating over the bases, which is what I used in vobj.SchemaMeta, because it closely replicates Python inheritance.  (If you really want to stick with Python, I've done all the work in metatools…)
+
+I'm in the opposite boat from you; I don't like the idea of a one-off hack for this, though I can't really put my finger on why.  Perhaps it violates my mental picture of how inheritance is supposed to work?  *shrug*
+
+=-=-=-=-= Comment 7, Score = 0.969 =-=-=-=-=
+I think, such hidden argument handling is bad. Smth like this:
+
+   def __init__(self, execute=None, *args, **kwargs):
+        if execute is None:
+            execute = self._execute
+        super(SanISCSIDriver, self).__init__(execute, *args, **kwargs)
+
+would be better. We know for sure that core VolumeDriver accepts execute as the first argument.
+
+=-=-=-=-= Comment 8, Score = 0.971 =-=-=-=-=
+Generally a bad idea to set a default value to any sort of object, as Python binds the function args to those objects by reference. Any changes within the scope of the function would be appended to the same object over time.
+
+I'd prefer you change it, as someone mucking with tests later could create some really confusing situations.
+
+=-=-=-=-= Comment 9, Score = 0.967 =-=-=-=-=
+Patch Set 29:
+
+(5 comments)
+
+I really think that we should have a class or named tuple for an nvp interface and some utility method that parse extraConfig to nvp interfaces. All kind of operations are easier to perform on a list of structured data compared to parsing with hardcoded strings every time. 
+
+=-=-=-=-= Comment 10, Score = 0.971 =-=-=-=-=
+This function doesn't work on arbitrary paths, only paths to directories/folders. It should be called dir_exists (or exists_dir, see above).
+
+Also, it isn't used! Given that any use of this function (or file_exists()) stands an excellent chance of being a race condition, it should be removed.
+
+Incidentally, the single use of file_exists() *is* a race condition, but a safe one.
+
+=-=-=-=-= Comment 11, Score = 0.967 =-=-=-=-=
+This has nothing to do with the class really - should be a standalone utils function or something. The more I think about it - I think it's at the wrong level of abstraction - when doing high-level stuff like get_records_since (which is what this class is about) - we don't care about what's the read query chunk size. Seems to me like a nicer abstraction would be a batch_mc_client wrapper that this class would use transparently.
+
+=-=-=-=-= Comment 12, Score = 0.967 =-=-=-=-=
+Perhaps call this drill_to_remotable_method?  
+
+As an alternate suggestion you could use utils.get_wrapped_function which will find the bottom-most method no matter how the decorator situation changes in the future.  But it doesn't ensure anything about remotability, so you could check that separately.  Perhaps a bit overkill, but could be more future proof.
+
+=-=-=-=-= Comment 13, Score = 0.967 =-=-=-=-=
+Patch Set 1: Code-Review-1
+
+(1 comment)
+
+I don't think this is a good fix - it most certainly does not eliminat all the races. We call allocate_for_instance without ever grabbing this lock in other places.
+
+I think we should agree that "utils.synchronized should be considered harmful" because it perpetuates writing code in terms of critical sections as opposed to locks on data. 
+
+=-=-=-=-= Comment 14, Score = 0.969 =-=-=-=-=
+I just want to throw out an alternative.  All other object save methods assume there's a context passed in, which avoids the if context:else pattern below.  But most, if not all, others are wrapped in base.remotable() which passes in a context without requiring the caller of save to pass it in.  What about adding a decorator that passes in the context, which may be None?
+
+=-=-=-=-= Comment 15, Score = 0.973 =-=-=-=-=
+nit: we could have the vm_ref at this point, and we could use it, dispatching to a fewer number of methods making the code easier to follow.
+
+I suspect this kind of indirection could easily be the source of accidentally recursive calls so maybe you want to write:    
+
+  vm_util.power_on_vm_ref(session, vm_ref)
+
+So you can avoid triggering a circular call?
+
+=-=-=-=-= Comment 16, Score = 0.967 =-=-=-=-=
+not part of this change but it would be really nice if this method returns directly what we need, so we don't have to call another utility function on the next line
+
+the general problem is that we expose too much implementation details from vSphere in the high-level methods of the driver; we need to fix this in the long term
+
+=-=-=-=-= Comment 17, Score = 0.978 =-=-=-=-=
+Why is it okay? I mean, I get that it runs, but *especially* since this is named with _cls as a suffix, people are going to expect it to be an actual class.
+
+I expect it would be trivial to refactor the code that uses this to expect a factory function, but I also expect that just making host_state_cls a @property here to wrap up your factory logic would be fine too. Can we do one of those instead of this?
+
+Further, could we just bake that functionality into the base HostManager class instead of having a different one? I'd like to get us away from providing class paths for implementation switches and this seems to further promote that behavior.
+
+=-=-=-=-= Comment 18, Score = 0.967 =-=-=-=-=
+I have heard this class described as being abstract, and it is generally acceptable for abstract base classes to implement methods for which a good default implementation exists.  Why would it be desirable for subclasses to have to duplicate this default implementation?  Or is this class instead intended to define an interface?
+
+=-=-=-=-= Comment 19, Score = 0.969 =-=-=-=-=
+So in get_available_nodes, we refresh this cache when it's called -- in fact, afaict, it's the only code that refreshes the cache.
+
+Is get_available_nodes going to be continue to be called regularly? Should we put some (potentially configurable) cache expiration settings/logic so that operators can have less stale data if they choose?
+

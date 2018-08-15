@@ -1,0 +1,140 @@
+=-=-=-=-= Comment 0, Score = 0.967 =-=-=-=-=
+The above will succeed, but not because the mock_update method was not called. :) It will succeed because there is no "assert_not_called" method of mock.MagicMock(), and therefore calling assert_not_called() will return a mocked-out magic method of the mock_update mock object.
+
+The proper way to test for a mock not being called is like so:
+
+ self.assertFalse(mock_update.called)
+
+=-=-=-=-= Comment 1, Score = 0.955 =-=-=-=-=
+So you try to verify arguments passed to the method mock_ssh_method here, right?
+
+  mock_ssh_method.assert_called_with('foo', 'touch', mock.ANY)
+  if is_same:
+    mock_unlink.assert_called_once_with(mock.ANY)
+  else:
+    mock_ssh_method.assert_called_with('foo', 'rm', mock.ANY)
+  ...
+
+=-=-=-=-= Comment 2, Score = 0.955 =-=-=-=-=
+There are ways to decorate the class such that you don't get a mock parameter passed to every test case. I think you just have to set the new= kwarg on the mock.
+
+If we're going to use stub_out, we could also do that for:
+
+@mock.patch.object(cw, 'IronicClientWrapper',
+                       lambda *_: FAKE_CLIENT_WRAPPER)
+
+On setUp so we don't have mock_node passed to every test.
+
+=-=-=-=-= Comment 3, Score = 0.959 =-=-=-=-=
+We should leave mox, as it does test that the params are right in other methods.
+
+I would have _mock_assert_host_exists take a parameter:
+
+_mock_assert_host_exists(self, host_name='fake_host')
+
+then:
+
+self.mox.StubOutWithMock(self.host_api, '_assert_host_exists')
+self.host_api._assert_host_exists(self.ctxt, host_name).AndReturn('fake_host')
+
+=-=-=-=-= Comment 4, Score = 0.959 =-=-=-=-=
+Can we move these tests under TestNeutronv2WithMock and use mock instead of mox?  We've been trying to not add new tests to the existing TestNeutronv2 class because (1) we want new tests to use mock and (2) TestNeutronv2 has all of the gross mox stubbing that happens in setup for each test run.
+
+=-=-=-=-= Comment 5, Score = 0.963 =-=-=-=-=
+Should there be a unittest for this function?  I didn't see one.  It seems like to test the changes for _wait_for_provision_state, it is calling destroy, which then calls _unprovision, which then calls _wait_for_provision.  Just wondering if getting closer to the actual function would be better.  Since _wait_for_provision_state is a closure function, it is probably difficult to test directly.
+
+=-=-=-=-= Comment 6, Score = 0.955 =-=-=-=-=
+you can do:
+with contextlib.nested(
+    mock.patch.object(drvr._remote_filesystem_driver,
+                      'create_file'),
+    mock.patch.object(drvr._remote_filesystem_driver,
+                                   'remove_file'))
+) as (mock_rem_fs_create, mock_rem_fs_remove):
+
+Then you do not need the nested mocks
+
+=-=-=-=-= Comment 7, Score = 0.969 =-=-=-=-=
+You can remove the above two lines. It is asserting exactly the same thing as lines 4732-4733 is: that *the last* call to mock_get_disk_xml was called with mock_dom.XMLDesc(0) and 'vdc'.
+
+If you want to verify that there were *two* calls to mock_get_disk_xml, both with the same arguments, you need to remove lines 4732-4733 and instead do this here:
+
+ exp_call = mock.call(mock_dom.XMLDesc(0), 'vdc')
+ mock_get_disk_xml.assert_has_calls([exp_call, exp_call])
+
+=-=-=-=-= Comment 8, Score = 0.955 =-=-=-=-=
+First, use mock now.
+
+Second, you're just asserting that container_id is passed to _teardown_network, but not testing at all what _teardown_network does, i.e. you're not testing that ProcessExecutionError flow at all.  You need test coverage for that.  You can mock out the subprocess execution, but the logic in that method needs testing.
+
+=-=-=-=-= Comment 9, Score = 0.953 =-=-=-=-=
+Still not seeing an explicit test where unrescue is called with power_on=False.
+
+The destroy_rescued test is testing that the destroy method will call unrescue with power_on=False, but if for some reason destroy no longer calls unrescue, we lose any coverage of unrescue with power_on=False, so I think it needs it's own test.  You could refactor this test_unrescue test to have a common private test with a power_on parameter and then call it with both True and False like you have for the migration tests.
+
+=-=-=-=-= Comment 10, Score = 0.955 =-=-=-=-=
+nit: I'm wondering if we should have a MetadataAPIFixture that extends OSAPIFixture and does this in the subclass? Or just make it a separate fixture? Then the API samples functional tests and everything else using this fixture doesn't need to be running this. Although I guess we already have metadata_listen on L438 above.
+
+=-=-=-=-= Comment 11, Score = 0.957 =-=-=-=-=
+I don't see you mocking out sleep here?
+
+I also notice this:
+2015-09-14 05:40:05.467 | nova.tests.unit.virt.xenapi.test_vm_utils.WaitForDeviceTestCase.test_wait_for_device_empty_block_path  10.016
+2015-09-14 05:40:05.468 | nova.tests.unit.virt.xenapi.test_vm_utils.WaitForDeviceTestCase.test_wait_for_device_make_path_fail    10.011
+
+=-=-=-=-= Comment 12, Score = 0.955 =-=-=-=-=
+contextlib.nested isn't available in python3 so I'd rather not add it in new tests. Looks like we don't run any tests under nova/tests/unit/network/* in the py34 job yet.
+
+The way I do these is decorate a function like "do_test" or "_test" and then call it.
+
+=-=-=-=-= Comment 13, Score = 0.971 =-=-=-=-=
+I think instead of asserting result is None (for a function that has no return value), it would be better to self.assertFalse(mock_fetch_image.called) and get rid of the "result" variable. It would also make it so you don't need to specify a side_effect for the mock_fetch_image.
+
+Another thing is this doesn't exercise the code path if kernel_path doesn't exist but ramdisk_path does. For that, you can have another similar test where you set side_effect=[False, True] for mock_exists.
+
+=-=-=-=-= Comment 14, Score = 0.959 =-=-=-=-=
+Could we actually do this in TestNeutronv2WithMock and use mock?  Most of us really hate the mega mox stubbing done in setUp of this test class and how brittle it makes most of the tests - would be much nicer to add new tests using mock in TestNeutronv2WithMock.  Pretty please...
+
+=-=-=-=-= Comment 15, Score = 0.952 =-=-=-=-=
+It is rather a functional test. Unit test should not test if the correct notification is sent, that is tested in functional tests. Unit tests should test whether the method was called with the correct parameters, I think.
+
+=-=-=-=-= Comment 16, Score = 0.955 =-=-=-=-=
+so a cleaner way of doing this is having a _check_status method which has an implementation for v2 and v2.1. eg
+
+def _check_status(expected_status, res, controller):
+  self.assertEqual(expected_status, res.status_int)
+
+and a second check_status(expected_status, res, controller_method):
+  self.assertEqual(expected_status, controller_method.wsgi_code)
+
+=-=-=-=-= Comment 17, Score = 0.959 =-=-=-=-=
+Looks good to me, so no changes are necessary, but maybe it looks better:
+
+   mock_get_vol_driver = mock.MagicMock()
+   mock_ebs_in_block_devs = mock.MagicMock(return_value=False)
+
+   with mock.patch.multiple(self.volumeops, _get_volume_driver=mock_get_vol_driver,  ebs_root_in_block_devices=mock_ebs_in_block_devs):
+
+       fake_vol_driver = mock_get_vol_driver.return_value
+
+=-=-=-=-= Comment 18, Score = 0.957 =-=-=-=-=
+MatchType is in test module. The test here refers to the nested test method and it fails as there is no MatchType in your test method.
+Please change your method name to something like _test(), so that it will not mask the original test module.
+
+=-=-=-=-= Comment 19, Score = 0.967 =-=-=-=-=
+The usual pattern for patching is usually with the decorators or the nested context manager, for example:
+
+ @mock.patch.object(...)
+ ...
+ def do_test(mock_destroy, mock_unplug, ...):
+     result = self.pluginlib_nova.with_vdi_in_dom0(...)
+
+ do_test()
+
+or
+
+ with test.nested(mock.patch.object(...),
+                  ...
+ ) as (mock_getdom0, mock_create, ...):
+     result = self.pluginlib_nova.with_vdi_in_dom0(...)
+

@@ -1,0 +1,303 @@
+=-=-=-=-= Comment 0, Score = 0.971 =-=-=-=-=
+I do not see difference using parent id or parent addr. in all cases we will need an extra index for 'address' and create an other one for parent_id|addr.
+
+So address needs to be indexed to scan by address at least.
+
+so if you use ID way:
+  parent_id needs to be indexed, id is already indexed
+
+if you use address
+  parent_addr needs to be indexed, address is not yet indexed but will be in all cases
+
+
+-1 because you really have to add an index for 'address' field
+
+=-=-=-=-= Comment 1, Score = 0.982 =-=-=-=-=
+Hm.  Imagine this:
+instance = Instance.get_by_uuid()
+instance.info_cache.network_info = something
+instance.save()
+
+In this case, 'info_cache' will not be in 'what_changed'... so it won't get saved.
+
+Additionally, if 'info_cache' itself happen to be set on the instance so that it is in what_changed()...  'info_cache' ends up being passed into db.instance_update() and it appears it is not set up to handle it.  But you'd only really set instance.info_cache when creating a fresh Instance w/ an empty InfoCache... hehe.
+
+I wonder if you should just handle info_cache explicitly in here for now.  Ie, always call info_cache.save() if the attr is set.  And make sure it's not in 'updates'.
+
+=-=-=-=-= Comment 2, Score = 0.970 =-=-=-=-=
+this could be a little bit generalized: 
+
+  model = models.ProjectUserQuota if user_id else model.Quota
+  query = model_query(context, model).\
+                  filter_by(project_id=project_id).\
+                  filter_by(resource=resource).\
+   if user_id:
+      query = query.filter_by(user_id=user_id)
+
+   result = query.first()
+   if not result:
+       ...
+
+=-=-=-=-= Comment 3, Score = 0.975 =-=-=-=-=
+This is mirrored on _sync_fixed_ips which uses:
+
+https://github.com/openstack/nova/blob/8238e8aaa0103e96ddb67ad178ed9848e9071ea6/nova/db/sqlalchemy/api.py#L1577
+
+def _fixed_ip_count_by_project(context, project_id):
+    nova.context.authorize_project_context(context, project_id)
+    return model_query(context, models.FixedIp, (models.FixedIp.id,),
+                       read_deleted="no").\
+                join((models.Instance,
+                      models.Instance.uuid == models.FixedIp.instance_uuid)).\
+                filter(models.Instance.project_id == project_id).\
+count()
+
+So LGTM.
+
+=-=-=-=-= Comment 4, Score = 0.971 =-=-=-=-=
+This would be simpler if you translated single values and ANY into range notation. So:
+
+    field_val = getattr(self, field)
+    if field_val == ANY:
+        field_val = "%d%s%d" % (min_val, RANGE, max_val)
+    elif RANGE not in field_val:
+        field_val = "%d%s%d" % (field_val, RANGE, field_val)
+    self._init_range_field(
+                field, field_val, pci_addr, min_val, max_val)
+
+then you can delete _init_value_field
+
+=-=-=-=-= Comment 5, Score = 0.979 =-=-=-=-=
+'maxLength': 255,
+
+seems necessary here, because this value is stored to value of aggregate_metadata table.
+
+ mysql> desc  aggregate_metadata;
+ +--------------+--------------+------+-----+---------+----------------+
+ | Field        | Type         | Null | Key | Default | Extra          |
+ +--------------+--------------+------+-----+---------+----------------+
+ | created_at   | datetime     | YES  |     | NULL    |                |
+ | updated_at   | datetime     | YES  |     | NULL    |                |
+ | deleted_at   | datetime     | YES  |     | NULL    |                |
+ | id           | int(11)      | NO   | PRI | NULL    | auto_increment |
+ | aggregate_id | int(11)      | NO   | MUL | NULL    |                |
+ | key          | varchar(255) | NO   | MUL | NULL    |                |
+ | value        | varchar(255) | NO   |     | NULL    |                |
+ | deleted      | int(11)      | YES  |     | NULL    |                |
+ +--------------+--------------+------+-----+---------+----------------+
+
+=-=-=-=-= Comment 6, Score = 0.977 =-=-=-=-=
+The return value from Query.all() is not a list of tuples. It's a list of ResultProxy objects actually:
+
+http://docs.sqlalchemy.org/en/latest/core/connections.html#sqlalchemy.engine.ResultProxy
+
+and thus you can access columns via index or field name dict-access.
+
+You can use the field name dict access and use collections.defaultdict(list) to reduce the complexity of the above to just this:
+
+ import collections
+ ...
+
+ results = collections.defaultdict(list)
+ for r in query_result:
+     pool_dict = {f: r[f] for f in fields}
+     results[r.compute_node_id].append(pool_dict)
+ return results
+
+=-=-=-=-= Comment 7, Score = 0.969 =-=-=-=-=
+there's no need to do N queries like this (one for each instance ID returned in the query_delete result). Instead, simply add a column to the query_delete selection:
+
+ query_delete = query_delete.select([table.c.id, table.c.uuid])
+
+and then grab the deleted instance UUIDs all at once:
+
+ rows = conn.execute(query_delete).fetchall()
+ deleted_instance_uuids = [r[1] for r in rows]
+
+=-=-=-=-= Comment 8, Score = 0.978 =-=-=-=-=
+In addition to this new model, you will want to add a relation() to the Instance model for the tags collection. Note that you don't need to add a foreign key. You just need to add the relation() which will tell SQLAlchemy which fields are used in the join expression between the instances and tags table.
+
+Something like this in the models.Instance() class would work:
+
+ class Instance(BASE, NovaBase):
+ ...
+     tags = orm.relationship(
+         "Tag",
+         primaryjoin='and_(Tag.resource_id == Instance.id,'
+                         'Instance.deleted == 0)')
+
+=-=-=-=-= Comment 9, Score = 0.971 =-=-=-=-=
+The updated_at field in TimestampMixin defined as
+
+    updated_at = Column(DateTime, onupdate=lambda: timeutils.utcnow())
+
+So I'm wondering that defining the value directly here to context.timestamp will be really persisted or the onupdate's utcnow() call will overwrite this value to the actual time.
+
+...
+
+I tried it out and it seems that the defined value has precedence over the onupdate call so we are safe here.
+
+=-=-=-=-= Comment 10, Score = 0.978 =-=-=-=-=
+We can't compare these two. In fact, the return type from db is not a dict, but just a PciDevice object defined in sqlalchemy.models.
+
+
+Some test cases like for metadata can be compared is because the db api return value has been converted to dict like:
+
+
+def instance_metadata_delete(context, instance_uuid, key):
+    _instance_metadata_get_query(context, instance_uuid).\
+        filter_by(key=key).\         
+        soft_delete()       
+
+
+Of course, we can use the _dict_from_object() function, but I think possibly we don't need compare every key, but one key like 'address' or 'hypervisor_name' is enough .
+
+=-=-=-=-= Comment 11, Score = 0.974 =-=-=-=-=
+I am not sure that this works as expected.
+Because .update() method just change the values in model instance, and doesn't do any request in db. This should be handled by session, but in this case it is not tracked by session. 
+so the correct way to make it is to create explicit session:
+
+session = get_session()
+
+with session.begin():
+   and make both queries in one session. 
+
+Also could you check do we use returned value, if not then this could be optimized and made through one query.
+
+=-=-=-=-= Comment 12, Score = 0.980 =-=-=-=-=
+Rather than put the full keypairs list in all instance action notifications, what if we put the instance.key_name in the InstancePayload since that's just part of the instances table and object, and then put the full keypair in the instance create/update/delete notifications?
+
+I'm not even sure if we need to provide the full keypair in the instance update or delete notifications, since you can't update the keypair on an instance after it's created, but including it with instance.update could be consistent with including instance.tags.
+
+=-=-=-=-= Comment 13, Score = 0.992 =-=-=-=-=
+p str(query) -- [the SQL is still 'join', not 'inner join']
+
+SELECT aggregates.created_at AS aggregates_created_at, aggregates.updated_at AS aggregates_updated_at, aggregates.deleted_at AS aggregates_deleted_at, aggregates.deleted AS aggregates_deleted, aggregates.id AS aggregates_id, aggregates.name AS aggregates_name, aggregate_hosts_1.created_at AS aggregate_hosts_1_created_at, aggregate_hosts_1.updated_at AS aggregate_hosts_1_updated_at, aggregate_hosts_1.deleted_at AS aggregate_hosts_1_deleted_at, aggregate_hosts_1.deleted AS aggregate_hosts_1_deleted, aggregate_hosts_1.id AS aggregate_hosts_1_id, aggregate_hosts_1.host AS aggregate_hosts_1_host, aggregate_hosts_1.aggregate_id AS aggregate_hosts_1_aggregate_id, aggregate_metadata_1.created_at AS aggregate_metadata_1_created_at, aggregate_metadata_1.updated_at AS aggregate_metadata_1_updated_at, aggregate_metadata_1.deleted_at AS aggregate_metadata_1_deleted_at, aggregate_metadata_1.deleted AS aggregate_metadata_1_deleted, aggregate_metadata_1.id AS aggregate_metadata_1_id, aggregate_metadata_1.key AS aggregate_metadata_1_key, aggregate_metadata_1.value AS aggregate_metadata_1_value, aggregate_metadata_1.aggregate_id AS aggregate_metadata_1_aggregate_id \nFROM aggregate_hosts, aggregates JOIN aggregate_hosts AS aggregate_hosts_1 ON aggregates.id = aggregate_hosts_1.aggregate_id AND aggregate_hosts_1.deleted = :deleted_1 AND aggregates.deleted = :deleted_2 JOIN aggregate_metadata AS aggregate_metadata_1 ON aggregates.id = aggregate_metadata_1.aggregate_id AND aggregate_metadata_1.deleted = :deleted_3 AND aggregates.deleted = :deleted_4 \nWHERE aggregates.deleted = :deleted_5 AND aggregate_hosts.host = :host_1
+
+=-=-=-=-= Comment 14, Score = 0.974 =-=-=-=-=
+If the DB API we used before used to return the instance faults list keyed by instance uuid but in descending order based on when the fault was created, when we iterate over the faults and store them in faults_by_uuid, wouldn't the fault that gets stored for a given instance be the oldest created fault? If so, wouldn't we have now changed this logic to store the newest fault per instance?
+
+=-=-=-=-= Comment 15, Score = 0.982 =-=-=-=-=
+will it remove the correct sort_dir corresponding to ignored key ?
+
+when i tried this-
+?sort_key=user_id&sort_dir=desc&sort_key=availability_zone&sort_key=vcpus&sort_dir=desc&sort_key=display_name&sort_dir=asc'
+
+below is something i get in compute_api.API.get_all:
+
+[u'desc', u'desc'], sort_keys=[u'user_id', u'availability_zone', u'display_name']
+
+so sort_dir of sort_key 'display_name' is being removed.
+
+Also L328 - common.get_sort_params(req.params)
+just prepare the list from requested sort_key and sort_dir.
+I m not sure where we do default sort_dir to 'desc' if not passed in combination with sort_key.
+
+=-=-=-=-= Comment 16, Score = 0.990 =-=-=-=-=
+The problem with the above is that the SQL query it will construct contains more joins/complexity than is needed. What the above will produce is the following:
+
+ SELECT placement_aggregates.uuid
+ FROM placement_aggregates
+ JOIN resource_provider_aggregates
+ ON placement_aggregates.id = resource_provider_aggregates.aggregate_id
+ JOIN resource_providers
+ ON resource_provider_aggregates.resource_provider_id = resource_providers.id
+ WHERE resource_providers.id = $RP_ID;
+
+There is no reason to construct the above though, when you can do the simpler:
+
+ SELECT placement_aggregates.uuid
+ FROM placement_aggregates
+ JOIN resource_provider_aggregates
+ ON placement_aggregates.id = resource_provider_aggregates.aggregate_id
+ AND resource_provider_aggregates.resource_provider_id = $RP_ID;
+
+You could accomplish the latter query most efficiently with the following, which would mean you wouldn't need to use the ORM relationship() mess added in the previous patch to the api_models.py:
+
+ _AGG_TBL = api_models.PlacementAggregate.__table__
+ _RP_AGG_TBL = api_models.ResourceProviderAggregate.__table__
+ ...
+
+ def _get_aggregates(context, rp_id):
+     conn = context.session.connection()
+     j = sa.join(_AGG_TBL, _RP_AGG_TBL,
+                 sa.and_(_AGG_TBL.c.id == _RP_AGG_TBL.c.aggregate_id,
+                         _RP_AGG_TBL.c.resource_provider_id == rp_id)))
+     sel = sa.select([_AGG_TBL.c.uuid]).select_from(j)
+     return [r[0] for r in conn.execute(sel).fetchall()]
+
+=-=-=-=-= Comment 17, Score = 0.975 =-=-=-=-=
+This likely won't work on PostgreSQL. Enum's are distinct objects in PostgreSQL and need to be named (with a name= attribute) and created (with enum.create()) before using them.
+
+Something like this should work (but is untested):
+
+  enum = Enum('ssh', 'x509', name='key_pairs0type')
+  enum.create()
+  keypair_type = Column('type', enum, nullable=False,
+               server_default=keypair.KEYPAIR_TYPE_SSH)
+
+The downgrade might need to drop the enum too.
+
+=-=-=-=-= Comment 18, Score = 0.991 =-=-=-=-=
+This looks too much verbose. I think you can rewrite it like this:
+
+def check(self, match_list, target_dict, cred_dict):
+    if not match_list:
+        return True
+    for and_list in match_list:
+        if isinstance(and_list, basestring):
+            and_list = (and_list,)
+        for match in and_list:
+            match_kind, match_value = match.split(':', 1)
+            try:
+                f = getattr(self, '_check_%s' % match_kind)
+            except AttributeError:
+                if not self._check_generic(match, target_dict, cred_dict):
+                    break
+            else:
+                if not f(match_value, target_dict, cred_dict):
+                    break
+        else:
+            return True
+    return False
+
+or if you prefer a more functionnal way:
+
+def _check(self, match, target_dict, cred_dict):
+    match_kind, match_value = match.split(':', 1)
+    try:
+        f = getattr(self, '_check_%s' % match_kind)
+    except AttributeError:
+        if not self._check_generic(match, target_dict, cred_dict):
+            return False
+    else:
+        if not f(match_value, target_dict, cred_dict):
+            return False
+    return True
+
+def check(self, match_list, target_dict, cred_dict):
+    if not match_list:
+        return True
+    for and_list in match_list:
+        if isinstance(and_list, basestring):
+            and_list = (and_list,)
+        if all(map(self._check, and_list)):
+            return True
+    return False
+
+=-=-=-=-= Comment 19, Score = 0.982 =-=-=-=-=
+can we add tests with multiple combination of sort_keys and sort_dir like-
+
+no sort_dir for 1 sort_key:
+
+- ?sort_key=user_id&sort_dir=desc&sort_key=availability_zone&sort_key=vcpus&sort_dir=desc&sort_key=display_name&sort_dir=asc'
+
+bad sort_dir with ignored key:
+
+- ?sort_key=user_id&sort_dir=desc&sort_key=vcpus&sort_dir=bad_dir
+
+
+bad sort_dir with multiple sort_key:
+
+- ?sort_key=user_id&sort_dir=desc&sort_key=display_name&sort_dir=bad_dir'
+

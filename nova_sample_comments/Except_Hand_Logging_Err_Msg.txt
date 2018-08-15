@@ -1,0 +1,178 @@
+=-=-=-=-= Comment 0, Score = 0.971 =-=-=-=-=
+I'm not sure we want to actually trace an error here, should an admin be paged to triage this?
+
+http://specs.openstack.org/openstack/openstack-specs/specs/log-guidelines.html#stacktraces-in-logs
+
+I'd think logging a warning and not stacktracing would be sufficient since this is just a best attempt to cleanup the failed build, i.e.:
+
+except Exception as exc2:
+    ctxt.reraise = False
+    LOG.warning(_LW('Could not clean up failed build, not rescheduling. Error: %s'), exc2)
+    raise BuildAbortException(...)
+
+=-=-=-=-= Comment 1, Score = 0.980 =-=-=-=-=
+I'd prefer:
+
+if e.status_code == 409 and e.message:
+    if e.message.startswith("Quota exceeded for resources"):
+        raise exception.PortLimitExceeded()
+    if e.message.startswith("No more IP addresses available on network"):
+        raise exception.NoMoreFixedIps()
+
+1) tighter message tests avoid false positives
+
+2) Not sure on OpenStack policy here, but I don't like logging and raising an exception. The code which handles the exception should log the event, if appropriate. Log+throw leads to redundant logging and large log files.
+
+=-=-=-=-= Comment 2, Score = 0.972 =-=-=-=-=
+Maybe it is not the best fit to raise HTTPForbidden when catched SecurityGroupLimitExceeded exception,and it is not correct to raise HTTPRequestEntityToolLarge when catched SecurityGroupLimitExceeded exception.
+
+According to https://github.com/Pylons/webob/blob/master/webob/exc.py
+"
+code = 413
+title = 'Request Entity Too Large'
+explanation = ('The body of your request was too large for this server.')
+"
+HTTPRequestEntityTooLarge means the body was too large, not the security group limit exceeded.
+
+=-=-=-=-= Comment 3, Score = 0.976 =-=-=-=-=
+I don't understand this change here.  Consider the 4 cases of the original code:
+
+  1. use_cow == True, no exception thrown: return True
+  2. use_cow == True, exception thrown: return False
+  3. use_cow == False, no exception thrown: return True
+  4. use_cow == False, exception thrown: return False
+
+With this change, case 1 now returns None instead of True.  Is there some reason we want this behavior?
+
+=-=-=-=-= Comment 4, Score = 0.972 =-=-=-=-=
+Another issue with this is the OverQuota exception block below tries to figure out what the issue is and provides an error message on the specific reason it failed.  If you're going to build the fixed_ips check into this flow, you should also have something figuring out if that's what caused the failure and provide information in the message going to the user so they aren't confused by instance quotas vs floating IPs quotas.
+
+=-=-=-=-= Comment 5, Score = 0.966 =-=-=-=-=
+Would probably be good to still have the warning for each over quota exception block to provide context, and log the instance uuid, e.g.
+
+LOG.warning(_LW('Neutron error: fixed IPs quota exceeded'), instance=instance)
+
+Might also be useful to log the port_req_body at debug level.
+
+=-=-=-=-= Comment 6, Score = 0.974 =-=-=-=-=
+This is not a reason of -1. just question.
+
+A new InvalidNumaNodesNumber is not handled at REST API layer,
+and HTTP500(internal server error) is returned to API users. I feel it is good for me because this is a server side(or operators' error), but the other exceptions(ImageNUMATopologyForbidden, etc) are handled at the API layer and converted to HTTP400 or something like https://github.com/openstack/nova/blob/master/nova/api/openstack/compute/servers.py#L686
+
+So is this current behavior(HTTP500) intentional?
+
+=-=-=-=-= Comment 7, Score = 0.970 =-=-=-=-=
+Here, if rescheduling returns without raising an exception we log the exception that caused us to reschedule. From looking at _cold_migrate() below this can happen either if there are no more valid hosts or if rescheduling is successful.
+
+Should we really log this as an error? I see the need to log the error that caused us to reschedule but should the log-level really be error in case rescheduling was successfully carried out?
+
+=-=-=-=-= Comment 8, Score = 0.979 =-=-=-=-=
+if the exception is 'TypeError', I think we won't generate password, we should return HTTPBadRequest.
+
+How about this:
+
+if not self.is_valid_body(body, 'rescue'):
+    raise HttpBadRequest(explanation=msg)
+
+if 'admin_password' in body['rescue']:
+    password = body['rescue']['admin_password']
+else:
+    password = utils.generate_password()
+
+rescue_image_ref = body['rescue']['rescue_image_ref']
+
+I know 'is_valid_body' doing some extra checking. But it can ensure body['rescue'] is dict. And later there are some guys will replace it with input validation schema.
+
+=-=-=-=-= Comment 9, Score = 0.969 =-=-=-=-=
+Right! this was there because calling unicode() on remote exceptions would result in a stack trace being printed not just the message.
+
+The code for rendering remote exception is now in oslo.messaging. Don't think this can ever happen here (most problematic was the API that could print the stack trace back to the user), but yes - we should use format_message in a cosistent manner.
+
+=-=-=-=-= Comment 10, Score = 0.970 =-=-=-=-=
+How about defining error_status_code instead of exc and the default code 404?
+
+ def version_handler(min_ver, max_ver=None, error_status_code=404):
+
+We have
+
+ raise webob.exc.status_map[status_code]
+
+So it is easy to find corresponding exception from the status code.
+
+I feel passing an exception to version_handler() is a little unreadable from caller side.
+
+=-=-=-=-= Comment 11, Score = 0.967 =-=-=-=-=
+Here should contain 500 also for passing original error message to a client.
+
+if not, the message is overwritten with the following message:
+
+ 501                 msg = _('Unexpected API Error. Please report this at '
+ 502                     'http://bugs.launchpad.net/nova/ and attach the Nova '
+ 503                     'API log if possible.\n%s') % type(exc)
+ 504                 raise webob.exc.HTTPInternalServerError(explanation=msg)
+
+=-=-=-=-= Comment 12, Score = 0.982 =-=-=-=-=
+Also, they aren't listed in the help:
+
+stack@newton:~$ nova-policy policy check --help
+usage: nova-policy policy check [-h] [--api-name <API name>]
+                                [--target <Target> [<Target> ...]]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --api-name <API name>
+                        Will return only passing policy rules containing the
+                        given API name.
+  --target <Target> [<Target> ...]
+                        Will return only passing policy rules for the given
+                        target. The available targets are project_id,user_id,q
+                        uota_class,availability_zone,instance_id. When
+                        "instance_id" is used, the other targets will be
+                        overwritten.
+stack@newton:~$
+
+=-=-=-=-= Comment 13, Score = 0.970 =-=-=-=-=
+So this instance group belongs to a specific tenant. Right now we will 404 if the context doesn't match the requested instance group here.
+
+The policy is actually enforced here:
+https://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L6500
+https://github.com/openstack/nova/blob/master/nova/db/sqlalchemy/api.py#L313
+
+Now I am fine with that, because its consistent, but I just wanted to be clear that the policy here really can only restrict access. You can't have a non-admin token read another tenant's server group, no matter what is done here.
+
+=-=-=-=-= Comment 14, Score = 0.966 =-=-=-=-=
+yes I know we won't but seems 
+status_reasons dict covers all the possible error code 
+the try / catch here to avoid the situation but this won't happen if nova code is carefully handle the error code, right? 
+
+If we do care about the error code return from nova, then except known code, all others should be taken as error ?
+
+=-=-=-=-= Comment 15, Score = 0.974 =-=-=-=-=
+I dislike catching all exceptions indiscriminately, and I really dislike doing that and then swallowing the original exception silently.  If we know what exception(s) we expect here, let's catch those specifically.  If we really want to catch everything, then we need to preserve the original exception, either in the logs (LOG.exception()) or preferably by re-raising the original exception (after logging your "Tar process exited unexpectedly" message) instead of creating a new exception.
+
+=-=-=-=-= Comment 16, Score = 0.969 =-=-=-=-=
+Patch Set 10:
+
+> os_compute_api:limits - RULE_ADMIN_OR_OWNER is checked always,
+ > os_compute_api:os-used-limits - RULE_ADMIN_API is checked only if
+ > the
+ > tenant_id GET param is present.
+
+Guh, thanks, I finally get it now. If the tenant_id GET param is present, that means it's asking for a *different* project than its own project, and in that case only admin are allowed to do it. Otherwise it's allowed to see usage for its own project. Patch Set 10: Code-Review+2
+
+I think this makes sense now, thanks. Patch Set 10:
+
+(1 comment) 
+
+=-=-=-=-= Comment 17, Score = 0.976 =-=-=-=-=
+fault is an Exception in every call to this function that I found (although I won't guarantee that I didn't miss something), so unicode(fault) returns the unicode representation of the arguments passed to Exception, which for NovaExceptions is always the exception's message, at least from what I can see.
+
+This is a bit unclear, but we can't just use the exception's message attribute directly because that won't have been formatted, so you end up with the %(something)s placeholders instead of the actual values.  I couldn't come up with a better way to do it, but that doesn't mean one doesn't exist. :-)
+
+=-=-=-=-= Comment 18, Score = 0.965 =-=-=-=-=
+No that doesn't make sense, if the neutron server raises NetworkNotFound and you're getting the results back from the neutron client, you should get a NetworkNotFoundClient exception back from python-neutronclient, you shouldn't get server exceptions since those would be translated to webob HTTP errors.
+
+=-=-=-=-= Comment 19, Score = 0.969 =-=-=-=-=
+Which decorator? safe_connect? And doesn't passing raise_exc=False to ksa affect what's happening for error handling? I might just be confusing different error cases here, i.e. errors where KSA can't make the request, those are handled in safe_connect, but errors from the request, e.g. the 409, are not raised as exceptions, and we get a result back.
+

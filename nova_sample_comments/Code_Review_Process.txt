@@ -1,0 +1,213 @@
+=-=-=-=-= Comment 0, Score = 0.973 =-=-=-=-=
+Patch Set 10: Looks good to me, but someone else must approve
+
+lgtm now Patch Set 10: (1 inline comment)
+
+Quick response inline.
+
+Agree on the bug report.  It's not clear what the problem is from that, which is a big part of why there have been so many patch sets needed on this.  Phong, can you try to refine the bug based on our discussions of this problem? Patch Set 10: (1 inline comment)
+
+One more comment inline, then I promise to shut up and wait for a better example of the problem. ;-) 
+
+=-=-=-=-= Comment 1, Score = 0.969 =-=-=-=-=
+Patch Set 17: Published edit on patch set 16 Patch Set 17: Code-Review+1
+
+Tweaked the commit message slightly. Patch Set 17: Code-Review-1
+
+These failures are real. I tried to work them out but I'm unclear enough on what the correct outcomes are I can't really fix it.
+
+I was able to see that the test itself may be wrong, at least in part. Patch Set 17:
+
+(1 comment)
+
+annotating one of the issues I thought I found 
+
+=-=-=-=-= Comment 2, Score = 0.972 =-=-=-=-=
+Patch Set 3: Code-Review-1
+
+(1 comment)
+
+Dan, I think you may have gotten the bug number wrong in the commit message? Fix that up and I'll approve this. Code looks great.
+
+-jay Patch Set 3: Code-Review+2 Workflow+1
+
+OK, so I see the last patch in this series closes the bug in question... in the future, probably best to leave off Related-bug: unless the patch is actually germane to the fix. Otherwise, it's quite confusing :)
+
+-jay 
+
+=-=-=-=-= Comment 3, Score = 0.973 =-=-=-=-=
+Patch Set 12: I would prefer that you didn't merge this
+
+Being that there are many questions over how this is supposed to work and the performance, can you please add more comments into the code.
+
+The comments in the code (or even the git commit msg), should explain
+
+* The performance impact
+* Assumptions made
+* Make it easier to understand how it supposed to work Patch Set 12: (1 inline comment)
+
+Inline doc request.
+
+Overall, LGTM though 
+
+=-=-=-=-= Comment 4, Score = 0.973 =-=-=-=-=
+I think the confusion in some of this series (I had some of this yesterday), was that this is all building up to the final change in the series that we want which is:
+
+https://review.openstack.org/#/c/356138/
+
+So some of the comments and commit messages are written as things that will happen with https://review.openstack.org/#/c/356138/ but don't happen as of this change. Laski and I had talked about squashing some of these changes into https://review.openstack.org/#/c/356138/ but there is a tradeoff with how complicated we want to make https://review.openstack.org/#/c/356138/ and it's already pretty complicated, so this is making it piecemeal.
+
+=-=-=-=-= Comment 5, Score = 0.984 =-=-=-=-=
+Patch Set 2: Code-Review-1
+
+(1 comment)
+
+unclear on the why behind this. Abandoned
+
+This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results. Patch Set 2:
+
+This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results. 
+
+=-=-=-=-= Comment 6, Score = 0.967 =-=-=-=-=
+Patch Set 2: (1 inline comment)
+
+Thanks for making the changes. Not sure if this is the correct thing to do at the moment as I have mentioned in previous comments we are moving all of this code to OSLO. It would be good if you can comment on the open patch sets there and then this valuable debug information can be added
+Thanks
+Gary Patch Set 2: (1 inline comment)
+
+ 
+
+=-=-=-=-= Comment 7, Score = 0.969 =-=-=-=-=
+Patch Set 4:
+
+Dmitry, you need to rebase this on to the latest version of the dependent patch series :) Patch Set 4: Code-Review-1
+
+(5 comments)
+
+Needs rebased to the latest version of the dependent patch, but also left some stuff to address inline...
+
+Overall, I really like where these refactoring patches are heading, though. Nice work.
+
+Best,
+
+-jay 
+
+=-=-=-=-= Comment 8, Score = 0.979 =-=-=-=-=
+nit: We should use Closes-Bug: #xxxx now
+    Closes-Bug: #1234567 -- use 'Closes-Bug' if the commit is intended to fully fix and close the bug being referenced.
+    Partial-Bug: #1234567 -- use 'Partial-Bug' if the commit is only a partial fix and more work is needed.
+    Related-Bug: #1234567 -- use 'Related-Bug' if the commit is merely related to the referenced bug. 
+
+Please refer to https://wiki.openstack.org/wiki/GitCommitMessages
+
+=-=-=-=-= Comment 9, Score = 0.970 =-=-=-=-=
+I asked sdague about it because I thought he was the one to comment on something like this in another review once and he said bugs should only be in the commit message for linkage, otherwise the problem should be explained in the commit message/comment in the code.  I think your comment is self-explanatory so it's not needed in the code, so just remove the "per bug xxx" part.
+
+=-=-=-=-= Comment 10, Score = 0.969 =-=-=-=-=
+Patch Set 11: Commit message was updated Patch Set 11:
+
+Hi Moshe, I tried to fix the English in your commit message. Please verify I haven't messed it up! Reviewing the actual code now. Patch Set 11:
+
+argh can you take https://bugs.launchpad.net/nova/+bug/1407721 back please? Thanks Patch Set 11:
+
+(6 comments) Patch Set 11:
+
+(4 comments) Patch Set 11:
+
+(2 comments)
+
+Quite a few comments have been made now, do you think you could push a new patchset to make it clear what we're looking at please? 
+
+=-=-=-=-= Comment 11, Score = 0.984 =-=-=-=-=
+Patch Set 1: Code-Review-1
+
+(1 comment) Patch Set 1:
+
+This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results. Abandoned
+
+This review is > 4 weeks without comment, and failed Jenkins the last time it was checked. We are abandoning this for now. Feel free to reactivate the review by pressing the restore button and leaving a 'recheck' comment to get fresh test results. 
+
+=-=-=-=-= Comment 12, Score = 0.975 =-=-=-=-=
+Patch Set 3: Looks good to me, but someone else must approve
+
+As far as I can tell, the only difference between patch 2 and patch set 3 was changing the "Closes-bug: #" to "Closes-Bug: ", which I probably would have left unchanged since you already had a +@ on this. Just my opinion, but probably would have made this move faster. Patch Set 3: (1 inline comment)
+
+I think a bit more detailed commit message title might make this patch move faster. Patch Set 3: Looks good to me (core reviewer); Approved
+
+Was +1 on this before and despite the nits in the commit message, I'm still OK with this. 
+
+=-=-=-=-= Comment 13, Score = 0.967 =-=-=-=-=
+Patch Set 38: Code-Review+2
+
+(2 comments)
+
+Alright, I don't know why the num_to_return / num_alts rename needed to happen in this change, but let's just keep going. Patch Set 38: Workflow+1
+
+Previously approved by Jay, only difference in the latest patch set is a rebase plus some minor changes, nothing substantial so I'm going to re-approve to keep this train moving. 
+
+=-=-=-=-= Comment 14, Score = 0.970 =-=-=-=-=
+Patch Set 7:
+
+Jay, I believe the -2 was because of my previous -1 due to there needing to be unit tests with this, which I think was brought up a few times and a response of "will work on tests later" is not valid when there is a -1 for that specific reason, especially if this isn't marked as a Work In Progress.
+
+At this point, you probably just need to try and catch Dan in IRC to get him to remove the -2. Patch Set 7: I would prefer that you didn't merge this
+
+(3 inline comments)
+
+ 
+
+=-=-=-=-= Comment 15, Score = 0.969 =-=-=-=-=
+If so, we need to describe the scope of this patch on the commit message. We need to check the coverage of each patch on these reviews and point if we find the lacks like my previous comment.
+
+If there are some description about the scope on the commit message, we can ignore this kind of lack on the review.
+
+=-=-=-=-= Comment 16, Score = 0.970 =-=-=-=-=
+I feel like the fake_fetch_image and fake_upload_image changes are orthogonal to this patch and add noise to the substantive change. In reviewing this patch, they stand out amongst the mechanical change, making the patch significantly harder to review. I would have preferred to see them in a separate patch.
+
+=-=-=-=-= Comment 17, Score = 0.978 =-=-=-=-=
+nit: Please refer to https://wiki.openstack.org/wiki/GitCommitMessages for "bug" line.
+
+Closes-Bug: #1234567 -- use 'Closes-Bug' if the commit is intended to fully fix and close the bug being referenced.
+Partial-Bug: #1234567 -- use 'Partial-Bug' if the commit is only a partial fix and more work is needed.
+Related-Bug: #1234567 -- use 'Related-Bug' if the commit is merely related to the referenced bug.
+
+=-=-=-=-= Comment 18, Score = 0.977 =-=-=-=-=
+Uploaded patch set 96: Patch Set 95 was rebased. Patch Set 96:
+
+(22 comments)
+
+Hi Matt,
+
+Thanks for the review, I answered and fixed a few comments already. I will look into the tests and add a release note as well.
+
+Thanks,
+Ildikó Patch Set 96:
+
+(2 comments)
+
+I pushed the fixes for the non test-related comments to have smaller changes up so I/we can move back to a previous version if I mess up something badly.
+
+I will do the split and then the test updates in follow-up patch sets.
+
+Thanks,
+Ildikó Patch Set 96:
+
+(1 comment) Patch Set 96:
+
+(1 comment) Patch Set 96:
+
+(1 comment) Patch Set 96:
+
+(1 comment) 
+
+=-=-=-=-= Comment 19, Score = 0.967 =-=-=-=-=
+Patch Set 3:
+
+Automatically re-added by Gerrit trivial rebase detection script. Patch Set 3: I would prefer that you didn't merge this
+
+(3 inline comments)
+
+Okay, I think I've leveled up my understanding of this part of the code so I get what's going on here now. Hard to say if I would have understood this change right off even with a better understanding of the surrounding bits. I think we need a little more detail in the commit message, which I've commented.
+
+After that, I think this is okay. Thanks! 
+

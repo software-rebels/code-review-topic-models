@@ -1,0 +1,133 @@
+=-=-=-=-= Comment 0, Score = 0.959 =-=-=-=-=
+oslo is 3rd party lib
+
+from oslo.config import cfg
+
+from nova import db
+from nova.openstack.common.gettextutils import _
+from nova.openstack.common import log as logging
+
+=-=-=-=-= Comment 1, Score = 0.943 =-=-=-=-=
+Per HACKING, please separate std libs from 3rd party imports with a single newline... so:
+
+ import datetime
+ 
+ import eventlet
+ import mox
+
+=-=-=-=-= Comment 2, Score = 0.952 =-=-=-=-=
+This line should line up with the first column of the triple-quotes on the preceding line; the triple-quotes on this line should actually be on a line by themselves; and there should be a blank line between the triple-quotes and the function def.
+
+=-=-=-=-= Comment 3, Score = 0.957 =-=-=-=-=
+According to HACKING, there should be a newline between the closing triple-quote and the 'def __init__(self):'.  Also, I have a slight preference for double-quote over single-quote in triple-quote docstrings, but that's an incredibly minor femtonit.
+
+=-=-=-=-= Comment 4, Score = 0.950 =-=-=-=-=
+Please see http://legacy.python.org/dev/peps/pep-0257/ it has
+
+"It has "Multi-line docstrings consist of a summary line just like a one-line docstring, followed by a blank line, followed by a more elaborate description. The summary line may be used by automatic indexing tools; it is important that it fits on one line and is separated from the rest of the docstring by a blank line. The summary line may be on the same line as the opening quotes or on the next line. The entire docstring is indented the same as the quotes at its first line (see example below)."
+
+=-=-=-=-= Comment 5, Score = 0.964 =-=-=-=-=
+Make sure you read HACKING.rst, particularly the section on imports.  Imports must be in "human alphabetical order" (for "from x import y" style imports, order them as if they read "import x.y"), and imports from the standard library (such as 'os') should be separated from imports from a third party (such as 'mox').
+
+=-=-=-=-= Comment 6, Score = 0.943 =-=-=-=-=
+1. The backslash is unnecessary due to the use of parentheses; please eliminate the backslash.
+
+2. Please add extra indentation to the second line of the condition to visually distinguish it from the code that follows.
+
+=-=-=-=-= Comment 7, Score = 0.963 =-=-=-=-=
+Nit: I really would prefer to have this whole expression enclosed in parentheses, so we can eliminate the backslash continuation.  Alternatively, you may want to consider using temporary variables, i.e.:
+
+    tot_refreshed = vol_usage['tot_last_refreshed']
+    curr_refreshed = vol_usage['curr_last_refreshed']
+    last_refreshed_time = (tot_refreshed if tot_refreshed < curr_refreshed
+                           else curr_refreshed)
+
+=-=-=-=-= Comment 8, Score = 0.946 =-=-=-=-=
+femtonit: I'd prefer if you used consistent indentation.  That is, in the two functions above, you indent by two spaces, but in this function, you indent with tabs; I'd prefer you pick one or the other.  (Personally, I prefer spaces, but…)
+
+=-=-=-=-= Comment 9, Score = 0.976 =-=-=-=-=
+Interesting.  That could be due to the other arguments you're using; I generally only use the one-argument form (which is likely all you need, too, actually).  I get:
+
+    >>> a = __import__('xml.dom')
+    >>> a
+    <module '_xmlplus' from '/usr/lib64/python2.7/site-packages/_xmlplus/__init__.pyc'>
+    >>> import sys
+    >>> sys.modules['xml']
+    <module '_xmlplus' from '/usr/lib64/python2.7/site-packages/_xmlplus/__init__.pyc'>
+
+(This is Python 2.7.)
+
+=-=-=-=-= Comment 10, Score = 0.957 =-=-=-=-=
+Patch Set 4: Code-Review-1
+
+(16 comments)
+
+-1 due to the mixed import orders. I think the rule in nova is the following:
+There separate blocks of import statements:
+1) imports from stdlib
+2) imports from 3pp
+3) imports from nova
+and then in every block the imports are ordered alphabetically 
+
+=-=-=-=-= Comment 11, Score = 0.943 =-=-=-=-=
+No, this is correct indentation for a continued line. Visual indentation would only be 4 spaces, which would line up with the 'return' line below. Correct indentation is 2 levels, or 8 spaces.
+
+=-=-=-=-= Comment 12, Score = 0.939 =-=-=-=-=
+The trailing comma here isn't a style I'd go for.  My preferences for list styles are:
+
+    [elem]
+    [elem1, elem2]
+    [
+        elem1,
+        elem2,
+    ]
+
+(femtonit)
+
+=-=-=-=-= Comment 13, Score = 0.943 =-=-=-=-=
+PEP8 (er, HACKING.rst): Need to use place-holders:
+
+    lno = len(lines) - index
+    print _('Line %(lno)d : %(line)s') % locals()
+
+=-=-=-=-= Comment 14, Score = 0.939 =-=-=-=-=
+Please indent continuation lines.  I know you're close to the 80 column limit but it would be better to use more vertical space if needed than to have continued lines that look like regular lines.
+
+=-=-=-=-= Comment 15, Score = 0.939 =-=-=-=-=
+Not sure how this is better?  Normally the convention is to follow alphabetical order.
+
+from nova import a
+from nova import b
+from nova.a import a
+from nova.b import b
+
+etc
+
+This just seems really arbitrary?
+
+=-=-=-=-= Comment 16, Score = 0.946 =-=-=-=-=
+Looking through git logs, I think
+
+-# Copyright 2010 United States Government as represented by the
+-# Administrator of the National Aeronautics and Space Administration.
+-# All Rights Reserved.
+
+is missing.
+
+=-=-=-=-= Comment 17, Score = 0.943 =-=-=-=-=
+As far as I know the high level order of imports in nova is:
+1) import from stdlib
+2) import from 3pp
+3) import from nova
+
+and then in every block order the imports alphabetically
+
+=-=-=-=-= Comment 18, Score = 0.957 =-=-=-=-=
+femtonits:
+
+1. I prefer triple quotes for docstrings.
+2. I prefer the second line of this docstring be indented only 4 spaces, so it lines up at the same column as the start of the triple quote, rather than being further indented so that it lines up after the triple quote.
+
+=-=-=-=-= Comment 19, Score = 0.939 =-=-=-=-=
+PEP257: Multi-line docstrings consist of a summary line just like a one-line docstring, followed by a blank line, followed by a more elaborate description
+

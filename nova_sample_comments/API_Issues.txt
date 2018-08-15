@@ -1,0 +1,134 @@
+=-=-=-=-= Comment 0, Score = 0.977 =-=-=-=-=
+This isn't tribal knowledge, but in general we need to get better about enforcing good help text for new config options.  markus_z has a spec that goes into detail about that and suggests a kind of checklist/template for config options and w/o being able to validate that kind of thing with tooling (and would require changes to oslo.config), I think we could integrate something high-level with basic points in a code review guide for nova.
+
+=-=-=-=-= Comment 1, Score = 0.975 =-=-=-=-=
+We would like to introduce both os-security-groups.inc and security-groups-inc based on Anne-s comment: "Okay, instead of deleting os-security-groups, which will still work on some clouds, you should document a new section.
+
+Because this file is named os-security-groups.inc, I would suggest starting a new file, security-groups.inc.
+
+Then in that new file, you'll point to the security_groups: security_groups_response in the parameters.yaml file."
+
+=-=-=-=-= Comment 2, Score = 0.977 =-=-=-=-=
+Patch Set 2: Code-Review-1
+
+(2 comments)
+
+Emm...I guess there is a little misunderstand for microversion.
+
+The v2 API(under nova/api/openstack/compute/contrib) means the old nova api without microversion support.
+
+The v2.1 API(under nova/api/openstack/compute/plugins/v3) means the new nova api with microversion support.
+
+The minimal microversion in v2.1 API is '2.1'. If you request without any specific version, the minimal version api will be returned. 
+
+=-=-=-=-= Comment 3, Score = 0.975 =-=-=-=-=
+We don't need this unless you can point out some external doc to the nova tree like the admin/operator guides or openstack manuals repo. Otherwise this tag creates a bug against nova.
+
+Looking externally a bit, the admin guide docs here could probably be updated to mention this microversion for the standardized version of the response:
+
+http://docs.openstack.org/admin-guide/common/nova-show-usage-statistics-for-hosts-instances.html#show-instance-usage-statistics
+
+So the DocImpact tag here should point that out since it will go into the bug report.
+
+=-=-=-=-= Comment 4, Score = 0.971 =-=-=-=-=
+I appreciate the goal of adding a whole chapter separated from devref but we could maybe reproduce the above layout by providing opsref/index including support-matrix ?
+
+Note : I'm not speaking about duplicating Ops docs that we have in the openstack-docs repo, but having specific ops-related information about a Nova version like you did
+
+=-=-=-=-= Comment 5, Score = 0.974 =-=-=-=-=
+I'm not entirely sure how we'll handle requirements updates.
+
+The requirements file can list the 'gi.repository' requirement - part of pygoject3.
+
+The interesting Libosinfo part though has no actual python library.  The python API is dynamically generated on the fly from metadata provided by the C library installation, so there's nothing you can list in requirements.txt for the libosinfo part.
+
+=-=-=-=-= Comment 6, Score = 0.972 =-=-=-=-=
+This is the wrong dependency for the nova change really. This nova change is going to require a global-requirements change in the openstack/requirements repo which bumps the minimum required version of python-ironicclient which contains https://review.openstack.org/#/c/247904/ and then this nova change is going to want to bump the same minimum version of ironicclient in nova's requirements.txt.
+
+=-=-=-=-= Comment 7, Score = 0.980 =-=-=-=-=
+1) Could you please add some words which explain how to determine which choice to use? For example, when should I used "unversioned" notifications? When I run an OpenStack cloud from Kilo|Liberty|Mitaka release? 
+
+2) I also would assume that we finally want to have versioned notification only. Is this an option we possibly deprecate in one of the future releases?
+
+3) Is this maybe also an "advanced option"? Which means a configuration deployers and ops rarely have to change? Some feedback from the ops was that they like to know which category a config options falls into ("required", "normal", "advanced").
+
+=-=-=-=-= Comment 8, Score = 0.972 =-=-=-=-=
+Patch Set 1: Code-Review-2
+
+(1 comment)
+
+AFAICT, there is no approved Nova blueprint or spec document for this feature in either Nova or Cinder (both are needed). Since we're past feature approval deadline for Nova, I'm afraid this will have to wait until the Kilo development cycle. 
+
+This page gives a bit more guidance on submission of specs & blueprints for Nova.
+
+https://wiki.openstack.org/wiki/Blueprints#Spec_.2B_Blueprints_lifecycle 
+
+=-=-=-=-= Comment 9, Score = 0.972 =-=-=-=-=
+upper-constraints isn't what we'd base the glanceclient boundary on, we'd use global-requirements because that defines the minimum required version.
+
+It looks like >=2.8 is the minimum required version of glanceclient going back to stable/pike. Ocata requires >=2.5 so we couldn't backport this to ocata without changes, but I'm not sure we need to backport it to ocata anyway given it's probably very latent anyway.
+
+=-=-=-=-= Comment 10, Score = 0.973 =-=-=-=-=
+Patch Set 25: Code-Review-1
+
+(1 comment)
+
+server-group extension is not the one of cores(API_V3_CORE_EXTENSIONS). Some environments might not provide server-group feature. So how about depending on server-group extension for this quota feature?
+If disabling server-group extension, Nova would not provide new attributes related to server-group extension. just one idea. Patch Set 25:
+
+@Phil
+
+Sorry for my unclear comment, I'd like to say that this feature depends on both a new extension server-group quota and the existing extension server-group.
+
+If disabling the server-group extension on some environments, the server-group quota is not used on such environments. In this case, I felt it is not necessary to provide server-group quota information to clients.
+but it was one idea, and I feel now current behavior, which provides server-group quota information always, is acceptable. Patch Set 25:
+
+(4 comments) 
+
+=-=-=-=-= Comment 11, Score = 0.971 =-=-=-=-=
+it is mainly describe the brief about what all things introduced in particular microversion. As Tempest is also user of APIs and we usually refer this doc to have initial glance on microversion.
+
+But i agree that it needs more finishing before go to user side. i am thinking to have this kind of info on api-ref which really helps api users to understand our microversion changes.
+
+I am ok to have this as ref as of now.
+
+=-=-=-=-= Comment 12, Score = 0.975 =-=-=-=-=
+This is actually a bad idea. Nova is the client, and needs to opt-in to the microversions it can understand. So while we want to know the highest microversion available on the cinder v3 endpoint that we're talking to, we still need to pin the actual version that we're going to use.
+
+For example, if our target version is 3.24 but the cinder endpoint only provides up to 3.15 (max in newton), then we can't do whatever we needed to do with 3.24. But if the max version available is 3.30, for example, we still only want to request 3.24 because that's the version that nova would understand, because there could be things in >3.24 that break nova if it's not expecting them.
+
+=-=-=-=-= Comment 13, Score = 0.977 =-=-=-=-=
+I wasn't sure if we'd want a release note for this. I tend to not thing so given we don't want a separate release note for each of these that we remove.
+
+I think we could use a generic release note that talks about some of the policy and extension loading impacts, like what the spec has in it - mainly because I think that deployers are going to read the release notes before they read the specs, i.e. only read a spec if you care about a particular feature or change.
+
+We could do a single generic release note at the end too.
+
+=-=-=-=-= Comment 14, Score = 0.977 =-=-=-=-=
+As noted in the change before this in the series, simple_cell_setup does the same thing as map_cell_and_hosts, but it also does map_cell0 and map_instances - and map_cell_and_hosts is OK for a non-cells v1 starting environment too. But I think this is probably OK for starters. From discussions we've had before, I think we actually want to get rid of simple_cell_setup long-term because it's turning out to be not so simple and different deployment tools have tried using it with different use cases that just don't work with how that command is written, so we'll probably eventually remove it and make tooling use the more specific commands for specific scenarios.
+
+=-=-=-=-= Comment 15, Score = 0.971 =-=-=-=-=
+The one purpose of v3 API is to fix inconsistent API design(inconsistent input/output parameters). Nova v2 API contains a lot of API, the number is 250+. Many developers have implemented them and the parameters have been inconsistent, but we could not fix them because of the backward incompatibilities. After that, we have started v3 API without v2 backward compatibilities.
+
+You can see the detail of v3 on http://ozlabs.org/~cyeoh/V3_API.html
+
+=-=-=-=-= Comment 16, Score = 0.976 =-=-=-=-=
+The docs have a similar warning against using this with the ComputeCapabilitiesFilter:
+
+http://docs.openstack.org/juno/config-reference/content/section_compute-scheduler.html#aggregate-instanceextraspecsfilter
+
+So shouldn't you also update this?
+
+But really, it's kind of annoying that we have duplicate documentation like this.  I'm assuming the nova devref came first and now the config reference is getting more activity.  Wouldn't it be better to sync them up and make sure the config reference doc is accurate with the devref and then deprecate the devref and make it point to the config reference docs - or vice versa?
+
+=-=-=-=-= Comment 17, Score = 0.975 =-=-=-=-=
+I think Sean's question is more, why are we making the proxy BM REST API in nova support keystone v3 when it's deprecated at the 2.36 microversion and people really shouldn't be using this proxy API anyway, so moving it forward to support ksa and keystone v3 is going against what we're trying to do, which is kill the proxy APIs. I didn't think about that when reviewing this, but it's a valid point, and I'd be good with removing this part of the change.
+
+=-=-=-=-= Comment 18, Score = 0.981 =-=-=-=-=
+I sort of wonder about this, but don't really want to think about it. If you're using nova-network then you're using cells v1. Cells v1 people could be upgrading to cells v2 by creating a cells v2 cell mapping for each of their v1 cells, but that doesn't mean we're making the API aware of multiple v2 cells with nova-network.
+
+I guess what this really boils down to is, you can't do multiple v2 cells with nova-network in Pike. We don't test it anyway. We have the cells v1 CI job which uses nova-network, but I don't know if it's testing creating tenant networks or anything, I didn't think that actually worked through the REST API for cells v1.
+
+=-=-=-=-= Comment 19, Score = 0.972 =-=-=-=-=
+In IRC alaski is saying no cells v1 users should be running this command, but nova-cells.conf is a cells v1 thing, so we have some confusing information here, which made me apparently misunderstand the release note.  If cells v1 users shouldn't be running this command, I think that needs to be explicit in the command help string and release note.
+

@@ -1,0 +1,216 @@
+=-=-=-=-= Comment 0, Score = 0.973 =-=-=-=-=
+Just an idea. We do *not* obliged to implement this idea.
+
+As you know if NUMA topology information isn't exposed then a PCI device is set as belonging to all nodes. These PCI devices "without" NUMA nodes are low performance than PCI associated with NUMA nodes. What if we will consider it in weigh calculation? 
+
+For example we have two hosts. First host has 5 PCI devices "without" NUMA nodes and second host has just 2 PCI devices associated with NUMA nodes. Obviously VMs with PCI devices booted on second host will have better performance.
+
+What if we will calculate 'total' something like:
+
+
+ total = pci_with_numa_count * K + pci_without_numa_count
+
+where 'K' is magic coefficient which will guarantee us that host, which has at least one PCI device associated with NUMA node, more valuable than any host without such devices (this host may have a lot of PCI devices "without" NUMA nodes but have *no* PCI devices associated with NUMA nodes)
+
+For example K can be equal 100.
+
+What do you think?
+
+=-=-=-=-= Comment 1, Score = 0.969 =-=-=-=-=
+So this is not correct memnode.cellid refers to instance NUMA node id (always 0 to n-1 in ascending order) while inst_cell.id refers to the host NUMA node which for instance depending on where it landed could be any host NUMA node id (for a 4 node instance these could be 3,0,5,1 for example)
+
+so I fear we either need to do this in the main loop where we have acces to the guest_node_id
+
+=-=-=-=-= Comment 2, Score = 0.969 =-=-=-=-=
+We should change select_destinations to return the full host list from the scheduler so we can retry on the original host list in conductor, which was the primary reason we talked about doing this in the scheduler - was because we had the list of filtered hosts and retries there might be faster. We get the same optimization if we return those hosts from the scheduler to conductor and use them for retries here.
+
+=-=-=-=-= Comment 3, Score = 0.990 =-=-=-=-=
+Patch Set 8:
+
+While I think having this extra affinity check in the manager is better than what we had before, and I agree it needs to be there, it still doesn't cover the following race condition:
+
+4 VMs are deployed into an empty affinity group simultaneously.
+VM1 and VM2 get scheduled to Host 1, and VM3 and VM4 get scheduled to Host 2. When this check is hit for the VM with the last time-stamp (let's say that is VM4), there will be VM members older than it. VM1 and VM2 on Host 1, VM3 on Host 2. Since this VM4's host is also Host 2, it will not pass the following check:
+    "if group_hosts and self.host not in group_hosts:". 
+So the VM wouldn't be rescheduled, and this would result in VMs deployed to Host 1 and Host 2 in the same affinity group. Patch Set 8:
+
+(2 comments)
+
+Same comment as before w/o the garbled format.
+
+While I think having this extra affinity check in the manager is better than what we had before, and I agree it should be implemented, it still doesn't cover the following race condition.
+
+4 VMs are created into an empty affinity group simultaneously. VM1 and VM2 get scheduled to Host1, and VM3 and VM4 get scheduled to Host2. When this check is hit for the VM with the last time-stamp (let's say that is VM4), there will be 3 VM members older than it. VM1 and VM2 on Host1, and VM3 on Host2. Since VM4's host is also Host2, it will not pass the following check.
+
+"if group_hosts and self.host not in group hosts".
+
+So VM4 wouldn't be rescheduled, and this would result in VMs deployed to Host1 and Host2 in the same affinity group. Patch Set 8:
+
+(1 comment) 
+
+=-=-=-=-= Comment 4, Score = 0.976 =-=-=-=-=
+From what I can tell, sharing_providers is a dict where:
+
+ {resource_class_id: [resource_provider_id1, resource_provider_id2, ...], ...}
+
+I was confused about how this makes sure that non-shared resources go first. I was thinking it was comparing IDs and we were assuming non-shared resources have lower IDs or something.
+
+Okay, just chatted with cdent on IRC and he let me know that sharing_providers also contains non-shared resources (the variable name confused me) and for those, the value is an empty list []. So this sorts the empty lists ahead of the populated lists, non-shared ahead of shared.
+
+=-=-=-=-= Comment 5, Score = 0.972 =-=-=-=-=
+I concur.
+
+Using 'tree' with resource filters is definitely needed.  Consider a setup where I've got e.g. multiple SR-IOV PFs and I want to get my VFs from any of them: ?tree={compute_rp}&resources=SRIOV_NET_VF:1
+
+If you were to use both 'uuid' and 'tree', you'll get zero results if the 'uuid' isn't a member of the nested tree; and one result if it is.
+
+If you use 'tree' with 'member_of', you ought to get only those providers in the tree which are *also* members of the specified aggregate.
+
+I don't see any discrepancies here.
+
+=-=-=-=-= Comment 6, Score = 0.971 =-=-=-=-=
+.    def _decrease_pool_count(pool_list, pool, count=1):
+        """Decrement pool's size by count.
+
+        If pool becomes empty, remove pool from pool_list.
+        """
+        if pool['count'] > count:
+            pool['count'] -= count
+            count = 0
+        else:
+            count -= pool['count']
+            pool_list.remove(pool)
+        return count
+
+=-=-=-=-= Comment 7, Score = 0.970 =-=-=-=-=
+I think this cpu_usage calculation needs adjusting.  For a compute node running instances with dedicated CPUs, "cpu_usage" should always match len(pinned_cpus).  In pin_cpus_with_siblings() we pin the siblings, so we need to also subtract the siblings from cpu_usage.  I think we should be able to just multiply len(instancecell.cpuset) by "host siblings per core" if the "isolate" policy is in use.
+
+=-=-=-=-= Comment 8, Score = 0.969 =-=-=-=-=
+No, sorry for being a pedant, but *all* the request groups mean the same thing: requested resources and traits that should be provided by the same provider tree.
+
+"Request group 0" merely represents a request for resources and traits from the same provider tree. "Request group 1" represents a request for resources and traits from the same provider tree. They are exactly the same concept.
+
+=-=-=-=-= Comment 9, Score = 0.977 =-=-=-=-=
+The limits part of the resource request in the legacy resource tracking system and the new max_unit/min_unit/step_size part of the new placement resource tracking system  are both meant to constrain the guest's usage of an over-allocated system so that no guest can ever consume more vCPU than pCPUs on the box. This is why the limits in the legacy system == the max pCPUs on the box and the max_unit value for VCPU resources in the new placement system is the same.
+
+=-=-=-=-= Comment 10, Score = 0.973 =-=-=-=-=
+I was a little confused the combination of these conditions.
+Here just wants to change request_spec and scheduler_hints based on users' request I think.
+
+SO how about
+
+ if host_name is None:
+     request_spec.requested_destination = None
+ elif not force:
+     request_spec.requested_destination = objects.Destination(
+         host=nodes[0].host, node=target.hypervisor_hostname)
+ else:
+     scheduler_hint.update({'host': host_name})
+
+ scheduler_hint = {'filter_properties': filter_properties}
+
+?
+
+=-=-=-=-= Comment 11, Score = 0.972 =-=-=-=-=
+I don't see how we're tying the sharing providers to their non-sharing providers via aggregate in this method if rp_ids is just a grab-bag of all the non-sharing and sharing RP IDs.
+
+For example, Compute Nodes and Sharing Providers associated with AGgregates as follows:
+
+ AG1: (CN1, SP1)
+ AG2: (CN2, SP2)
+
+...and both (CN1+SP1) and (CN2+SP2) can satisfy the requested_resources, the `rp_ids` param to this method would be (CN1, CN2) and the `sharing` param would be (SP1, SP2)?  But couldn't that result in allocation requests including (CN1+SP2) and (CN2+SP1)?
+
+=-=-=-=-= Comment 12, Score = 0.986 =-=-=-=-=
+So, I think that just iterating this list once is not going to give us the desired result. By going through this once, picking a primary and a set of alternates for each instance to be created, we're basically going to be guaranteed that alternates selected for early instances will be primaries for the later instances. This will almost always ensure that they won't be able to reschedule at all. Later instances will benefit from having alternates that weren't primary targets for any other instances.
+
+So I think what we need to do is iterate this once, picking (and consuming) primary hosts for each of the instances to be created. Then, we can go back and pick the alternates for them all. The alternates can overlap with each other, but shouldn't overlap with any primaries.
+
+We *could* just naively select max_attempts alternates from the remaining list when we're done and apply those to all the primaries. However (and maybe as an optimization later) it would probably be good to select several such slices of the remaining hosts, if we have enough.
+
+Does the above make sense?
+
+=-=-=-=-= Comment 13, Score = 0.986 =-=-=-=-=
+It comes back to how you view the relationship between NUMA and CPU pinning. I really think they are one & the same problem in fact.
+
+Our initial NUMA work /was/ doing CPU pinning, with the distinction that each vCPU was pinned to a range of host pCPUs. What we're doing here is just fine tuning that so that instad of pinning a vCPU to a range of pCPUs, we're pinning it to 1 pCPU. 
+
+Basically I see a structure
+
+A machine has topology. The topology has 1 or more cells. A cell has CPUs and some quanity of RAM. The CPUs and RAM have various properties like count, quanity, page size / count, pinning, and so forth. I don't see the point of creating multiple different classes to record different properties related to the CPU & RAM. One cell class can/should record all the properties we care about for CPU or RAM.
+
+=-=-=-=-= Comment 14, Score = 0.976 =-=-=-=-=
+This method doesn't work for the case Eric pointed out.
+
+The case is: The Compute node has VCPU, memory and local disk, but at same time the compute node with another shared storage pool in the same aggregate. When the local disk is exhausted, the compute node can use the shared storage.
+
+The SQL '_get_all_with_shared' will filter out the compute node, since the local disk is exhausted.
+
+=-=-=-=-= Comment 15, Score = 0.969 =-=-=-=-=
+It would be good to add a paragraph here telling the user that placement aggregates are *not* the same as Nova host aggregates and should not be considered equivalent. The primary differences between Nova's host aggregates and placement aggregates are the following:
+
+* In Nova, a host aggregate associates a *nova-compute service* with other nova-compute services. Placement aggregates are not specific to either a nova-compute service and are, in fact, not compute-specific at all. A resource provider in the Placement API is generic, and placement aggregates are simply groups of generic resource providers. This is an important difference especially for Ironic, which when used with Nova, has many Ironic baremetal nodes attached to a single nova-compute service. In the Placement API, each Ironic baremetal node is its own resource provider and can therefore be associated to other Ironic baremetal nodes via a placement aggregate association.
+
+* In Nova, a host aggregate may have *metadata* key/value pairs attached to it. All nova-compute services associated with a Nova host aggregate share the same metadata. Placement aggregates have no such metadata because placement aggregates *only* represent the grouping of resource providers. In the Placement API, resource providers are individually decorated with *traits* that provide qualitative information about the resource provider.
+
+* In Nova, a host aggregate dictates the *availability zone* within which one or more nova-compute services reside. Placement aggregates have no concept of an availability zone.
+
+=-=-=-=-= Comment 16, Score = 0.969 =-=-=-=-=
+So this is a list of dicts with a single 'allocations' key which maps to a list of dicts for allocation requests. Seems this one could be flattened so we could have:
+
+{
+   'allocation_requests': [
+       {
+           "resource_provider": {
+               "uuid": $rp_uuid,
+           }
+           "resources": {
+               $resource_class: $requested_amount, ...
+           },
+       }, ...
+    ],
+   'provider_summaries': {
+       RP_UUID_1: {
+           'resources': {
+              'DISK_GB': 4,
+              'VCPU': 2
+           }
+       },
+       RP_UUID_2: {
+           'resources': {
+              'DISK_GB': 6,
+              'VCPU': 3
+           }
+       }
+    }
+}
+
+=-=-=-=-= Comment 17, Score = 0.972 =-=-=-=-=
+So is host_list a list, or a list of lists? Because the compute code is passing [host_list] back to cellconductor:build_instances when rescheduling.
+
+Also, is the host_list[0] entry the same as the compute host that we run this on, or is that popped off so if I have selected hosts 1, 2, 3, 4, primary=1 and alternates=(2,3,4), when I'm building on host1, will host_list contain 1 or will it just be the alternates? If the latter, we should consider renaming the variable from host_list to alternate_hosts.
+
+=-=-=-=-= Comment 18, Score = 0.981 =-=-=-=-=
+Patch Set 36:
+
+Sahid, if more than one instance gets placed to a host and both of those instances require isolated emulator threads policy, does the emulator thread get pinned to the *same* pCPU? or do the emulator threads get pinned to *different* pCPUs?
+
+If the former, then I believe we will need to track the reserved pinned emulator threads as a single consumed resource and not multiple consumed resources. In other words, if two instances with isolated emulator thread policies are sharing a single physical core for the emulator thread I/O, then we should only have a single VCPU as overhead, not 2 VCPU.
+
+-jay Patch Set 36: Code-Review+2 Workflow+1
+
+(2 comments)
+
+++ 
+
+=-=-=-=-= Comment 19, Score = 0.968 =-=-=-=-=
+Here you are creating a resource provider and below you add inventory to it. The only inventory you are adding, though, is for the custom resource class. The created resource doesn't have any VCPU, DISK_GB, or RAM_MB.
+
+So when you request GET /placement/allocation_candidates?resources=CUSTOM_MAGIC%3A256%2CDISK_GB%3A1%2CMEMORY_MB%3A512%2CVCPU%3A1
+
+there is no single resource provider which has all of those resources.
+
+Instead of creating a resource provider like this, what you want to do is compute node as done in the super class and then extend its inventory to add the custom resource class. There are two ways to do that, one is to get the existing inventories, add to them and put them back. The other is to update a single class of inventory as described at: https://developer.openstack.org/api-ref/placement/#update-resource-provider-inventory
+
+Keep in mind, however, that the compute node may call get_inventory and reset the inventory, so you'll  need to watch for that.
+

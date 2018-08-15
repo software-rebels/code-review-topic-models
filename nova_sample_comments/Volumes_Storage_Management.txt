@@ -1,0 +1,164 @@
+=-=-=-=-= Comment 0, Score = 0.985 =-=-=-=-=
+bdm.volume_id at this point is the old volume because we haven't updated the BDM yet, that happens on L5051. So this isn't taking into account if we failed or not. What the code was doing before this was, if we failed to swap on the driver, it would terminate the connection for the new volume. If we successfully swapped in the driver, we'd terminate the connection for the old volume and then update the bdm on L5051 with the new volume's connection_info.
+
+We initialized the connection for the new volume on L4906.
+
+So I think what you really need to do here, is have two attachments temporarily. Where we'd call initialize_connection for the new volume on L4906, we need to create a new attachment for the instance and new volume there.
+
+If swap is successful, we delete the old volume attachment and update the attachment_id in the bdm to the new attachment for the new volume.
+
+If swap failed, we delete the new volume attachment for the new volume and don't have to change anything in the BDM.
+
+=-=-=-=-= Comment 1, Score = 0.972 =-=-=-=-=
+Right soft_delete doesn't make sense here. In the normal soft_delete case, the instance.host is set or the the compute is up and we call soft_delete_instance on the compute manager:
+
+https://github.com/openstack/nova/blob/master/nova/compute/manager.py#L2575
+
+Which sends the soft_delete notifications.
+
+Once the timer is up, if the instance that was soft deleted hasn't been restored, it's hard-deleted here:
+
+https://github.com/openstack/nova/blob/master/nova/compute/manager.py#L6459
+
+I think force_delete is OK for the notification in this _local_delete method, yes.
+
+=-=-=-=-= Comment 2, Score = 0.972 =-=-=-=-=
+Why don't we consider 'accepted' as in-progress for live migration?
+
+https://github.com/openstack/nova/blob/master/nova/conductor/manager.py#L404
+
+That's the status that the live migration task in conductor sets for the initial live migration status, same for the API setting the initial evacuate migration status to 'accepted'.
+
+I know you have these values in here because that's what is in the existing in-progress live migration API code, but I think they are wrong to exclude 'accepted'.
+
+=-=-=-=-= Comment 3, Score = 0.986 =-=-=-=-=
+If the nova-compute service is up and after is_up is set to True, if the rabbitmq server crashes for some reasons, then the instance task_state remains in the 'deleting' status and user won't be allowed to delete the instance forever. But if this check [1] is removed, then it will. At present, the only way to delete the instances whose task_state is "deleting" is when nova-compute services where these instances are running is restarted.
+
+IMO, from the users point of view, he/she will be frustrated to see that the instances are  not getting deleted for a long time.
+
+[1]:   if original_task_state in (task_states.DELETING,		
+                                        task_states.SOFT_DELETING):
+
+To reproduce this problem, I have added sleep of 10 seconds immediately after Line #1488. Within this 10 seconds,I have stopped the rabbitmq-server and there you will see the instance remains in the 'deleting' status forever.
+
+=-=-=-=-= Comment 4, Score = 0.978 =-=-=-=-=
+This is probably not necessary. This method is used as the wait_func passed to the nova.virt.block_device attach method from _prep_block_device_mappings and is used in the case of source_type=blank/image/snapshot, where nova calls off to cinder to create the volume.
+
+In that case, nova is waiting for the volume to be available so it can then call os-attach to attach the newly created volume to the instance. So it shouldn't be in-use until after that happens, and it wouldn't be multiattach=True b/c nova is creating it in the BFV case.
+
+=-=-=-=-= Comment 5, Score = 0.970 =-=-=-=-=
+Just to convince myself:
+
+ 1. We see the instance is not scheduled, so we will try to delete the BR
+ 2. Look up the BR and try to delete and we're done. If not,
+ 3. Look up the instance and delete it. If already gone, we're done
+ 4. If we got here, there is actually an instance record, so do normal delete
+
+Right?
+
+If we race between 1 and 2, we're okay because the BR is deleted before the host field is set, so we'll fail to delete it and know we raced.
+
+If we race between 2 and 3, we fail to look up the instance record which is already gone and we bail on L1670.
+
+If we race between 3 and 4, we will do whatever we used to do, which may or may not handle failures properly, but...
+
+=-=-=-=-= Comment 6, Score = 0.975 =-=-=-=-=
+Hi Dan,
+
+IMO this is not the right place to set migration status to 'complete' as, the driver.live_migration call initiates another greenthread which executes driver._live_migration with respective callbacks for post_live_migration and rollback_live_migration.
+
+In this case, if live-migration fails after giving call to driver.live_migration, then the migration status should not be set to 'complete' as migration has not completed and failed in-between.
+
+=-=-=-=-= Comment 7, Score = 0.980 =-=-=-=-=
+Patch Set 7:
+
+@Weiwei, I think you're reading that cinder code incorrectly, it says update the volume's status to 'attaching' if the current status is 'available' or 'in-use' but only if the volume.multiattach flag is True, which it won't be for at least volumes that Nova creates. You could create a volume in cinder with multiattach=True, but you can't actually attach it to more than one instance in nova since nova doesn't yet support multiattach. So for a volume with multiattach=False (the default), the volume status must be 'available' in order to reserve it (change the status to 'attaching'). Patch Set 7:
+
+(4 comments) 
+
+=-=-=-=-= Comment 8, Score = 0.972 =-=-=-=-=
+We said in the checkpoint meeting today that we shouldn't be calling attachment_update when we're just asking to refresh the connection_info because that changes the attach_status on the volume to 'attaching' and we don't later call attachment_complete, so we've left the volume in a bad state - and what calls the refresh method might not actually be doing anything with attachments. So I thought we were just going to do an attachment_get()['connection_info'] for new style attachment connection info refresh?
+
+=-=-=-=-= Comment 9, Score = 0.973 =-=-=-=-=
+Shouldn't this happen in the compute API before we do the RPC cast to the compute?
+
+https://github.com/openstack/nova/blob/master/nova/compute/api.py#L3706
+
+There is also such a thing as attaching a volume to a shelved offloaded instance, which 'attaches' it in the API by linking up the instance and the volume in the nova and cinder databases:
+
+https://github.com/openstack/nova/blob/master/nova/compute/api.py#L3770
+
+But it doesn't actually attach the volume to the guest until the instance is unshelved.
+
+If we're just following the existing compute.instance.volume.attach notification, then this is probably OK, but the attach really starts in the API and ends in the compute. Do we do any other start notifications for operations in the API and do the end in the compute? We also don't set the task_state on the instance in the API when attaching a volume so we wouldn't get an instance.update notification either.
+
+Looking at things like pause.start and pause.end, those are done in the compute, so I guess doing volume.attach.start and volume.attach.end like that is consistent.
+
+=-=-=-=-= Comment 10, Score = 0.980 =-=-=-=-=
+Actually, when we reserve the volume, we put it in "attaching".
+And when we unreserve the volume, we check for state "attaching" and then put in state "in use".
+So we have a race. We check_attach, and everything is OK, volume is available (or in-use for multi-attach)
+If the state changes before we call reserve_volume, then reserve volume will fail.
+But when we call unreserve_volume, that will also fail if the state is not 'attaching'. this could happen if the call we've competed with finishes (state is now in-use) or if a multi-attach detaching was or still is in progress (state is detaching or available).
+
+So L#3079 would fail in this case.
+
+=-=-=-=-= Comment 11, Score = 0.973 =-=-=-=-=
+Nevermind, we call conductor to manage the task, but the compute task api does an rpc call to migrate_server which doesn't actually rpc cast until it hits the compute and casts to prep_resize - so we can probably do the validation for the host/cell stuff within conductor rather than here in the API - the failure there will come back on the rpc call and we can raise it back as a 400 error.
+
+=-=-=-=-= Comment 12, Score = 0.979 =-=-=-=-=
+At first I thought we needed to call this from somewhere, but this is really here because in the existing code we attach via the virt driver first, and if that works then we call attach in the cinder API, and if that fails then we need to rollback the attachment from the virt driver (os-brick). But now we're doing the cinder attach API first, then the virt driver (os-brick) attach, and if that fails then we're assuming (I guess) that we don't need to call detach on the driver. If that is a problem, then the compute driver's attach_volume method probably needs to be doing a better job of cleaning up after itself on a failure.
+
+=-=-=-=-= Comment 13, Score = 0.972 =-=-=-=-=
+The volume_id may be None though, at least on initial create of the BDM:
+
+https://github.com/openstack/nova/blob/master/nova/compute/api.py#L1216
+
+At least in that case the instance_uuid is set.
+
+The other place a BDM is created is in the compute manager:
+
+https://github.com/openstack/nova/blob/master/nova/compute/manager.py#L4646
+
+The instance_uuid is also set there, and if the volume_id was None, it's set to 'reserved', so you could race to have two BDMs with the same instance_uuid and volume_id of 'reserved' if you're, for example, booting from volume with a snapshot or image rather than a pre-created volume.
+
+So this is definitely not a solid fix, but it's arguably not any worse than what we already have I guess.
+
+If what we really care about is the volume_id at the time of detach, we should have that set by the time detach is called, at least in the boot from volume case where we lock on the instance uuid. The only time we wouldn't have the volume_id set with boot from volume is if the volume create (like booting with a snapshot or image) timed out, but then the build request should also go to ERROR and you wouldn't be able to try a detach anyway.
+
+=-=-=-=-= Comment 14, Score = 0.970 =-=-=-=-=
+Patch Set 1: Code-Review-1
+
+(2 comments)
+
+It's not clear from the bug that this fixes anything. What state is the instance left in if network teardown fails, it's ignored, and then driver rollback executes? Isn't rollback still incomplete if the network on the destination wasn't torn down? Wouldn't the instance have network allocated on both the source and the destination in this case, with no indication to the user? 
+
+=-=-=-=-= Comment 15, Score = 0.979 =-=-=-=-=
+One thing that kind of worries me about rescheduling, is if we're booting from volume with source_type of image/snapshot/blank, nova has already created a volume and waited for it to be available. Now if we can't initialize a connection to the host to attach the volume, we'll not only orphan that volume but reschedule and potentially orphan more volumes that nova creates.
+
+The orphaned volume case is a bug on it's own (unless you use delete_on_termination=True so that when you delete the instance we also delete the volume).
+
+But rescheduling exposes it a bit more.
+
+=-=-=-=-= Comment 16, Score = 0.975 =-=-=-=-=
+So this is potentially still a problem for other volume drivers, right?  I see that the reporter of the bug had a proposed fix in pre_live_migration here:
+
+https://bugs.launchpad.net/nova/+bug/1406161/comments/1
+
+What are your thoughts on that?  I think we know we have issues in the live migration flow with volumes attached where we aren't preserving the connection_info properly, like in the case of bug 1419577 where the connection_info is updated for the destination host but then live migrations and we don't rollback the connection information for the source host.
+
+=-=-=-=-= Comment 17, Score = 0.971 =-=-=-=-=
+This seems like a bad assumption. 'local' is only value for source_type in ('image', 'blank') but the reverse is not true, i.e. I may want source_type='image' and destination_type='volume'.
+
+You might be able to make further educated guesses for each type, i.e. if source=blank and guest_format is not swap, for example, then assume local. Or if source=image and boot_index >= 0.
+
+Still, it seems like we should just fail and require destination_type rather than guess here.
+
+=-=-=-=-= Comment 18, Score = 0.973 =-=-=-=-=
+I was just reading this comment and I don't see how "conductor halts the build process." That is, I don't see how successful deletion of the BuildRequest stops the conductor from doing anything further.
+
+Because from what I can tell, mriedem is right that if the instance hasn't been scheduled yet and a delete comes in, it could delete the BuildRequest before conductor creates the instance record in the cell, so there's a window where the instance will be not found, but then pop up again once conductor creates the instance record.
+
+=-=-=-=-= Comment 19, Score = 0.976 =-=-=-=-=
+Hmm, this is a change in behavior for attaching a volume to a shelved offloaded instance, correct? I guess we aren't marking the attached volume as in-use for the shelved offloaded case because we can't actually attach the volume to the instance on the host until we unshelve the instance (we don't have a host connector otherwise). And calling complete_attachment from the API to mark the volume as in-use is also probably strange if the attachment doesn't have a host connector...
+
